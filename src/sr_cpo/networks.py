@@ -35,17 +35,31 @@ class WangResidualBlock(nn.Module):
 
 
 class ResidualTower(nn.Module):
-    """Input projection followed by Wang residual blocks."""
+    """Reference-compatible MLP tower with optional Wang residual blocks.
+
+    By default this matches the reference ``skip_connections=0`` path:
+    projection Dense, LayerNorm, swish, then a plain Dense/LN/swish stack.
+    Set ``use_residual=True`` for the depth-scaling residual architecture.
+    """
 
     width: int = 256
     num_blocks: int = 4
+    use_residual: bool = False
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         x = jnp.asarray(x, dtype=jnp.float32)
         x = nn.Dense(self.width, kernel_init=KERNEL_INIT, bias_init=BIAS_INIT)(x)
+        x = nn.swish(nn.LayerNorm()(x))
         for _ in range(self.num_blocks):
-            x = WangResidualBlock(width=self.width)(x)
+            if self.use_residual:
+                x = WangResidualBlock(width=self.width)(x)
+            else:
+                x = nn.Dense(
+                    self.width, kernel_init=KERNEL_INIT, bias_init=BIAS_INIT
+                )(x)
+                x = nn.LayerNorm()(x)
+                x = nn.swish(x)
         return x
 
 
@@ -55,11 +69,16 @@ class SAEncoder(nn.Module):
     width: int = 256
     num_blocks: int = 4
     latent_dim: int = 64
+    use_residual: bool = False
 
     @nn.compact
     def __call__(self, state: jnp.ndarray, action: jnp.ndarray) -> jnp.ndarray:
         x = _concat((state, action))
-        x = ResidualTower(width=self.width, num_blocks=self.num_blocks)(x)
+        x = ResidualTower(
+            width=self.width,
+            num_blocks=self.num_blocks,
+            use_residual=self.use_residual,
+        )(x)
         return nn.Dense(
             self.latent_dim, kernel_init=KERNEL_INIT, bias_init=BIAS_INIT
         )(x)
@@ -71,10 +90,15 @@ class GEncoder(nn.Module):
     width: int = 256
     num_blocks: int = 4
     latent_dim: int = 64
+    use_residual: bool = False
 
     @nn.compact
     def __call__(self, goal: jnp.ndarray) -> jnp.ndarray:
-        x = ResidualTower(width=self.width, num_blocks=self.num_blocks)(goal)
+        x = ResidualTower(
+            width=self.width,
+            num_blocks=self.num_blocks,
+            use_residual=self.use_residual,
+        )(goal)
         return nn.Dense(
             self.latent_dim, kernel_init=KERNEL_INIT, bias_init=BIAS_INIT
         )(x)
@@ -88,13 +112,18 @@ class Actor(nn.Module):
     num_blocks: int = 4
     log_std_min: float = -5.0
     log_std_max: float = 2.0
+    use_residual: bool = False
 
     @nn.compact
     def __call__(
         self, state_or_obs: jnp.ndarray, goal: jnp.ndarray | None = None
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         x = _concat((state_or_obs, goal)) if goal is not None else state_or_obs
-        x = ResidualTower(width=self.width, num_blocks=self.num_blocks)(x)
+        x = ResidualTower(
+            width=self.width,
+            num_blocks=self.num_blocks,
+            use_residual=self.use_residual,
+        )(x)
         x = nn.Dense(
             2 * self.action_size, kernel_init=KERNEL_INIT, bias_init=BIAS_INIT
         )(x)
@@ -108,13 +137,18 @@ class CostCritic(nn.Module):
 
     width: int = 256
     num_blocks: int = 4
+    use_residual: bool = False
 
     @nn.compact
     def __call__(
         self, state: jnp.ndarray, action: jnp.ndarray, goal: jnp.ndarray
     ) -> jnp.ndarray:
         x = _concat((state, action, goal))
-        x = ResidualTower(width=self.width, num_blocks=self.num_blocks)(x)
+        x = ResidualTower(
+            width=self.width,
+            num_blocks=self.num_blocks,
+            use_residual=self.use_residual,
+        )(x)
         q_value = nn.Dense(1, kernel_init=KERNEL_INIT, bias_init=BIAS_INIT)(x)
         return jnp.squeeze(q_value, axis=-1)
 
