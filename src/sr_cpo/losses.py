@@ -189,3 +189,47 @@ def actor_loss_fn(
         "f_term_mean": jnp.mean(f_value) / nu_f,
     }
     return loss, probes
+
+
+def cost_critic_loss_fn(
+    cost_critic_params: Params,
+    cost_critic_target_params: Params,
+    actor_params: Params,
+    transitions: Any,
+    key: Array,
+    *,
+    actor: Any,
+    cost_critic: Any,
+    gamma_c: float = 0.99,
+    goal: Array | None = None,
+) -> tuple[Array, dict[str, Array]]:
+    """TD(0) cost-critic loss with Bellman-B c(s_{t+1}) targets."""
+
+    state = jnp.asarray(transitions.observation, dtype=jnp.float32)
+    action = jnp.asarray(transitions.action, dtype=jnp.float32)
+    extras = _extras(transitions)
+    next_state = jnp.asarray(extras["next_state"], dtype=jnp.float32)
+    cost = jnp.asarray(extras["cost"], dtype=jnp.float32)
+    discount = jnp.asarray(transitions.discount, dtype=jnp.float32)
+    goal_arr = _goal_from_transitions(transitions, goal)
+
+    next_sample = sample_tanh_gaussian(actor, actor_params, next_state, goal_arr, key)
+    qc_target = cost_critic.apply(
+        cost_critic_target_params, next_state, next_sample.action, goal_arr
+    )
+    target = jax.lax.stop_gradient(cost + gamma_c * discount * qc_target)
+    qc_online = cost_critic.apply(cost_critic_params, state, action, goal_arr)
+    loss = 0.5 * jnp.mean(jnp.square(qc_online - target))
+    probes = {
+        "cost_critic_loss": loss,
+        "mean_cost": jnp.mean(cost),
+        "mean_qc": jnp.mean(qc_online),
+        "mean_target": jnp.mean(target),
+    }
+    return loss, probes
+
+
+def alpha_loss_fn(log_alpha: Array, log_prob: Array, action_size: int) -> Array:
+    """SAC entropy-temperature loss."""
+
+    return -jnp.mean(log_alpha * (log_prob + action_size))

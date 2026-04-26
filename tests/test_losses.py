@@ -6,7 +6,9 @@ import jax.numpy as jnp
 from sr_cpo.env_wrappers import Transition
 from sr_cpo.losses import (
     actor_loss_fn,
+    alpha_loss_fn,
     contrastive_logits,
+    cost_critic_loss_fn,
     critic_loss_fn,
     sample_tanh_gaussian,
 )
@@ -84,13 +86,19 @@ def _actor_setup(
     if zero_row:
         state = state.at[0].set(jnp.zeros((state_dim,), dtype=jnp.float32))
         goal = goal.at[0].set(jnp.zeros((goal_dim,), dtype=jnp.float32))
+    next_state = state + jnp.asarray(0.05, dtype=jnp.float32)
+    cost = jnp.asarray([0.0, 1.0, 0.0, 0.25], dtype=jnp.float32)
 
     transition = Transition(
         observation=state,
         action=action,
         reward=jnp.zeros((batch_size,), dtype=jnp.float32),
         discount=jnp.ones((batch_size,), dtype=jnp.float32),
-        extras={"goal": goal},
+        extras={
+            "goal": goal,
+            "next_state": next_state,
+            "cost": cost,
+        },
     )
     actor = Actor(action_size=action_dim)
     sa_encoder = SAEncoder()
@@ -256,3 +264,46 @@ def test_actor_sampling_respects_log_std_clipping() -> None:
 
     assert bool(jnp.all(sample.log_std >= -5.0))
     assert bool(jnp.all(sample.log_std <= 2.0))
+
+
+def test_cost_critic_loss_forward_and_grad_finite() -> None:
+    (
+        actor_params,
+        _,
+        cost_critic_params,
+        transition,
+        actor,
+        _,
+        _,
+        cost_critic,
+    ) = _actor_setup()
+    loss_fn = partial(
+        cost_critic_loss_fn,
+        cost_critic_target_params=cost_critic_params,
+        actor_params=actor_params,
+        transitions=transition,
+        key=jax.random.PRNGKey(10),
+        actor=actor,
+        cost_critic=cost_critic,
+        gamma_c=0.99,
+    )
+
+    (loss, probes), grads = jax.value_and_grad(loss_fn, has_aux=True)(
+        cost_critic_params
+    )
+
+    assert loss.shape == ()
+    assert bool(jnp.isfinite(loss))
+    _assert_finite_tree(probes)
+    _assert_finite_tree(grads)
+
+
+def test_alpha_loss_forward_and_grad_finite() -> None:
+    log_prob = jnp.asarray([-1.0, -0.5, -2.0, -1.5], dtype=jnp.float32)
+    log_alpha = jnp.asarray(0.0, dtype=jnp.float32)
+
+    loss, grad = jax.value_and_grad(alpha_loss_fn)(log_alpha, log_prob, 2)
+
+    assert loss.shape == ()
+    assert bool(jnp.isfinite(loss))
+    assert bool(jnp.isfinite(grad))
