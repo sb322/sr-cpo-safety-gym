@@ -44,7 +44,10 @@ def _info_array(
 
 
 def _cost_from_info(info: Mapping[str, Any]) -> jax.Array:
-    # safe-learning GoToGoal.reset/step populate info["cost"]; do not recompute it.
+    # safe-learning GoToGoal.reset initializes info["cost"] to 0.0. Its step
+    # first advances physics to post-action data, then sets info["cost"] from
+    # get_cost(data), so step cost is the post-step transition cost. Step
+    # transitions must therefore read next_state.info["cost"], not state.info.
     return jnp.asarray(_info_array(info, "cost"), dtype=jnp.float32)
 
 
