@@ -13,14 +13,15 @@ def test_pid_lagrangian_clamps_integral_state_for_anti_windup() -> None:
         kp=0.0,
         ki=1.0,
         kd=0.0,
-        lambda_max=5.0,
+        integral_min=-5.0,
+        integral_max=5.0,
     )
 
     assert float(state.integral) == 5.0
     assert float(state.lambda_tilde) == 5.0
 
 
-def test_pid_lagrangian_clamps_lambda_without_rewriting_integral_lower() -> None:
+def test_pid_lagrangian_projects_lambda_without_rewriting_integral_lower() -> None:
     state = make_pid_state()
 
     state = update_pid_lagrangian(
@@ -30,11 +31,30 @@ def test_pid_lagrangian_clamps_lambda_without_rewriting_integral_lower() -> None
         kp=0.0,
         ki=1.0,
         kd=0.0,
-        lambda_max=5.0,
+        integral_min=-5.0,
+        integral_max=5.0,
     )
 
     assert float(state.integral) == -5.0
     assert float(state.lambda_tilde) == 0.0
+
+
+def test_pid_lagrangian_does_not_cap_lambda_tilde_at_integral_bound() -> None:
+    state = make_pid_state()
+
+    state = update_pid_lagrangian(
+        state,
+        estimated_cost=jnp.asarray(10.0, dtype=jnp.float32),
+        budget=0.0,
+        kp=10.0,
+        ki=1.0,
+        kd=0.0,
+        integral_min=-5.0,
+        integral_max=5.0,
+    )
+
+    assert float(state.integral) == 5.0
+    assert float(state.lambda_tilde) == 105.0
 
 
 def test_pid_lagrangian_derivative_uses_previous_error() -> None:

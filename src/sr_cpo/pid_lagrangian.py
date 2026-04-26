@@ -31,18 +31,22 @@ def update_pid_lagrangian(
     kp: float = 0.1,
     ki: float = 0.003,
     kd: float = 0.001,
-    lambda_max: float = 100.0,
+    integral_min: float = -100.0,
+    integral_max: float = 100.0,
 ) -> PIDState:
-    """Updates lambda_tilde and clamps the integral state for anti-windup."""
+    """Updates lambda_tilde with anti-windup clamp on the integral state."""
 
     error = jnp.asarray(estimated_cost, dtype=jnp.float32) - jnp.asarray(
         budget, dtype=jnp.float32
     )
-    integral_limit = jnp.asarray(lambda_max / max(ki, 1e-8), dtype=jnp.float32)
-    integral = jnp.clip(state.integral + error, -integral_limit, integral_limit)
+    integral = jnp.clip(
+        state.integral + error,
+        jnp.asarray(integral_min, dtype=jnp.float32),
+        jnp.asarray(integral_max, dtype=jnp.float32),
+    )
     derivative = error - state.previous_error
     raw_lambda = kp * error + ki * integral + kd * derivative
-    lambda_tilde = jnp.clip(raw_lambda, 0.0, lambda_max).astype(jnp.float32)
+    lambda_tilde = jnp.maximum(raw_lambda, 0.0).astype(jnp.float32)
     return PIDState(
         integral=integral.astype(jnp.float32),
         previous_error=error.astype(jnp.float32),
