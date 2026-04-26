@@ -19,7 +19,7 @@ import optax
 from flax import struct
 
 from sr_cpo.dual_estimator import estimate_discounted_cost
-from sr_cpo.env_wrappers import Transition
+from sr_cpo.env_wrappers import Transition, make_safe_learning_go_to_goal
 from sr_cpo.losses import (
     actor_loss_fn,
     alpha_loss_fn,
@@ -55,6 +55,8 @@ class TrainConfig:
     steps_per_epoch: int = 4
     num_envs: int = 1
     unroll_length: int = 8
+    use_real_env: bool = False
+    env_episode_length: int = 1000
     prefill_steps: int = 2
     sgd_steps: int = 2
     batch_size: int = 8
@@ -94,6 +96,8 @@ class TrainingObjects:
     critic_optimizer: optax.GradientTransformation
     cost_optimizer: optax.GradientTransformation
     alpha_optimizer: optax.GradientTransformation
+    action_dim: int
+    env_adapter: Any | None = None
 
 
 @struct.dataclass
@@ -109,7 +113,7 @@ class TrainState:
 
     key: Array
     step: Array
-    env_state: ToyEnvState
+    env_state: Any
     replay: ReplayBuffer
     actor_params: Any
     actor_opt_state: Any
@@ -172,6 +176,16 @@ def _collect_trajectory(
     objects: TrainingObjects,
     config: TrainConfig,
 ) -> tuple[TrainState, Mapping[str, Array]]:
+    if objects.env_adapter is not None:
+        return _collect_real_trajectory(train_state, objects, config)
+    return _collect_toy_trajectory(train_state, objects, config)
+
+
+def _collect_toy_trajectory(
+    train_state: TrainState,
+    objects: TrainingObjects,
+    config: TrainConfig,
+) -> tuple[TrainState, Mapping[str, Array]]:
     key, scan_key = jax.random.split(train_state.key)
 
     def collect_step(
@@ -226,6 +240,69 @@ def _collect_trajectory(
         replay=replay,
         step=train_state.step
         + config.num_envs * config.unroll_length,
+    )
+    return next_state, metrics
+
+
+def _collect_real_trajectory(
+    train_state: TrainState,
+    objects: TrainingObjects,
+    config: TrainConfig,
+) -> tuple[TrainState, Mapping[str, Array]]:
+    key, scan_key = jax.random.split(train_state.key)
+    env_adapter = objects.env_adapter
+    if env_adapter is None:
+        raise ValueError("real-env collection requires objects.env_adapter")
+
+    def collect_step(
+        carry: tuple[Array, Any], _: Array
+    ) -> tuple[tuple[Array, Any], Transition]:
+        step_key, env_state = carry
+        step_key, actor_key = jax.random.split(step_key)
+        goal = _goal_from_obs(env_state.obs, config.goal_dim)
+        sample = sample_tanh_gaussian(
+            objects.actor,
+            train_state.actor_params,
+            env_state.obs,
+            goal,
+            actor_key,
+        )
+        next_env_state, transition = env_adapter.step(env_state, sample.action)
+        return (step_key, next_env_state), transition
+
+    (next_key, next_env_state), transitions = jax.lax.scan(
+        collect_step,
+        (scan_key, train_state.env_state),
+        jnp.arange(config.unroll_length),
+    )
+    del next_key
+
+    observations = jnp.concatenate(
+        [
+            train_state.env_state.obs[None, ...],
+            transitions.extras["next_state"],
+        ],
+        axis=0,
+    )
+    replay = _insert_vector_trajectories(
+        train_state.replay,
+        observations=observations,
+        actions=transitions.action,
+        rewards=transitions.reward,
+        discounts=transitions.discount,
+        costs=transitions.extras["cost"],
+        d_wall=transitions.extras["d_wall"],
+        hard_violations=transitions.extras["hard_violation"],
+    )
+    metrics = {
+        "cost": jnp.mean(transitions.extras["cost"]),
+        "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
+    }
+    next_state = train_state.replace(
+        key=key,
+        env_state=next_env_state,
+        replay=replay,
+        step=train_state.step + config.num_envs * config.unroll_length,
     )
     return next_state, metrics
 
@@ -378,7 +455,7 @@ def _sgd_step(
         alpha_key,
     )
     alpha_loss, alpha_grad = jax.value_and_grad(alpha_loss_fn)(
-        train_state.log_alpha, sample.log_prob, config.action_dim
+        train_state.log_alpha, sample.log_prob, objects.action_dim
     )
     alpha_updates, log_alpha_opt_state = objects.alpha_optimizer.update(
         alpha_grad, train_state.log_alpha_opt_state, train_state.log_alpha
@@ -510,7 +587,9 @@ def make_training_epoch(
     return training_epoch
 
 
-def initialize_training(config: TrainConfig) -> tuple[TrainState, TrainingObjects]:
+def initialize_training(
+    config: TrainConfig, env_adapter: Any | None = None
+) -> tuple[TrainState, TrainingObjects]:
     """Initializes modules, optimizers, toy env state, and replay buffer."""
 
     key = jax.random.PRNGKey(config.seed)
@@ -521,9 +600,30 @@ def initialize_training(config: TrainConfig) -> tuple[TrainState, TrainingObject
         g_key,
         cc_key,
         obs_key,
-    ) = jax.random.split(key, 6)
+        env_key,
+    ) = jax.random.split(key, 7)
+    runtime_observation_dim = config.observation_dim
+    runtime_action_dim = config.action_dim
+    if config.use_real_env:
+        env_adapter = env_adapter or make_safe_learning_go_to_goal(
+            num_envs=config.num_envs,
+            episode_length=config.env_episode_length,
+        )
+        env_state, reset_transition = env_adapter.reset(env_key)
+        runtime_observation_dim = int(reset_transition.observation.shape[-1])
+        runtime_action_dim = int(env_adapter.action_size)
+    else:
+        env_state = ToyEnvState(
+            obs=0.1
+            * jax.random.normal(
+                obs_key,
+                (config.num_envs, runtime_observation_dim),
+                dtype=jnp.float32,
+            )
+        )
+
     actor = Actor(
-        action_size=config.action_dim,
+        action_size=runtime_action_dim,
         width=config.width,
         num_blocks=config.num_blocks,
         use_residual=config.use_residual,
@@ -545,8 +645,8 @@ def initialize_training(config: TrainConfig) -> tuple[TrainState, TrainingObject
         num_blocks=config.num_blocks,
         use_residual=config.use_residual,
     )
-    dummy_state = jnp.zeros((1, config.observation_dim), dtype=jnp.float32)
-    dummy_action = jnp.zeros((1, config.action_dim), dtype=jnp.float32)
+    dummy_state = jnp.zeros((1, runtime_observation_dim), dtype=jnp.float32)
+    dummy_action = jnp.zeros((1, runtime_action_dim), dtype=jnp.float32)
     dummy_goal = jnp.zeros((1, config.goal_dim), dtype=jnp.float32)
     actor_params = actor.init(actor_key, dummy_state, dummy_goal)
     critic_params = {
@@ -562,16 +662,8 @@ def initialize_training(config: TrainConfig) -> tuple[TrainState, TrainingObject
     replay = make_replay_buffer(
         capacity=config.buffer_capacity,
         episode_length=config.unroll_length,
-        observation_dim=config.observation_dim,
-        action_dim=config.action_dim,
-    )
-    env_state = ToyEnvState(
-        obs=0.1
-        * jax.random.normal(
-            obs_key,
-            (config.num_envs, config.observation_dim),
-            dtype=jnp.float32,
-        )
+        observation_dim=runtime_observation_dim,
+        action_dim=runtime_action_dim,
     )
     state = TrainState(
         key=key,
@@ -598,6 +690,8 @@ def initialize_training(config: TrainConfig) -> tuple[TrainState, TrainingObject
         critic_optimizer=critic_optimizer,
         cost_optimizer=cost_optimizer,
         alpha_optimizer=alpha_optimizer,
+        action_dim=runtime_action_dim,
+        env_adapter=env_adapter,
     )
     return state, objects
 

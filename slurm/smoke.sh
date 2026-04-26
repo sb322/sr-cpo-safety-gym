@@ -136,11 +136,13 @@ echo "===== TRAINING ====="
     --steps-per-epoch 7 \
     --num-envs 256 \
     --unroll-length 62 \
+    --use-real-env \
+    --env-episode-length 1000 \
     --prefill-steps 2 \
     --sgd-steps 1 \
     --batch-size 1024 \
     --buffer-capacity 8192 \
-    --observation-dim 6 \
+    --observation-dim 55 \
     --action-dim 2 \
     --goal-dim 3 \
     --width 256 \

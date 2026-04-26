@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import jax
 import jax.numpy as jnp
 
+from sr_cpo.env_wrappers import Transition
 from sr_cpo.train import (
+    ToyEnvState,
     TrainConfig,
     format_epoch_metrics,
     initialize_training,
@@ -30,6 +34,54 @@ def _tiny_config() -> TrainConfig:
     )
 
 
+class FakeVectorAdapter:
+    action_size = 2
+
+    def __init__(self, *, num_envs: int, observation_dim: int = 5) -> None:
+        self.num_envs = num_envs
+        self.observation_dim = observation_dim
+
+    def reset(self, key: jax.Array) -> tuple[ToyEnvState, Transition]:
+        obs = jax.random.normal(
+            key, (self.num_envs, self.observation_dim), dtype=jnp.float32
+        )
+        transition = Transition(
+            observation=obs,
+            action=jnp.zeros((self.num_envs, self.action_size), dtype=jnp.float32),
+            reward=jnp.zeros((self.num_envs,), dtype=jnp.float32),
+            discount=jnp.ones((self.num_envs,), dtype=jnp.float32),
+            extras={
+                "next_state": obs,
+                "cost": jnp.zeros((self.num_envs,), dtype=jnp.float32),
+            },
+        )
+        return ToyEnvState(obs=obs), transition
+
+    def step(
+        self, state: ToyEnvState, action: jax.Array
+    ) -> tuple[ToyEnvState, Transition]:
+        action_pad = jnp.pad(
+            action, ((0, 0), (0, self.observation_dim - self.action_size))
+        )
+        next_obs = 0.99 * state.obs + 0.05 * action_pad
+        cost = jnp.maximum(0.0, 0.1 - jnp.linalg.norm(next_obs[:, :2], axis=-1))
+        next_state = ToyEnvState(obs=next_obs)
+        transition = Transition(
+            observation=state.obs,
+            action=action,
+            reward=-jnp.linalg.norm(next_obs[:, :3], axis=-1),
+            discount=jnp.ones((self.num_envs,), dtype=jnp.float32),
+            extras={
+                "state": state.obs,
+                "next_state": next_obs,
+                "cost": cost,
+                "d_wall": jnp.ones((self.num_envs,), dtype=jnp.float32),
+                "hard_violation": (cost > 0.0).astype(jnp.float32),
+            },
+        )
+        return next_state, transition
+
+
 def test_training_epoch_runs_and_returns_finite_metrics() -> None:
     config = _tiny_config()
     state, objects = initialize_training(config)
@@ -41,6 +93,23 @@ def test_training_epoch_runs_and_returns_finite_metrics() -> None:
     assert int(state.step) == config.num_envs * config.unroll_length * (
         config.prefill_steps + config.steps_per_epoch
     )
+    for leaf in jax.tree_util.tree_leaves(metrics):
+        assert bool(jnp.all(jnp.isfinite(leaf)))
+
+
+def test_training_epoch_can_collect_from_real_env_adapter_path() -> None:
+    config = replace(_tiny_config(), use_real_env=True)
+    adapter = FakeVectorAdapter(num_envs=config.num_envs, observation_dim=5)
+    state, objects = initialize_training(config, env_adapter=adapter)
+
+    assert state.replay.observations.shape[-1] == 5
+    assert objects.env_adapter is adapter
+
+    state = prefill_buffer(state, objects, config)
+    training_epoch = make_training_epoch(objects, config)
+    state, metrics = training_epoch(state)
+
+    assert state.replay.actions.shape[-1] == adapter.action_size
     for leaf in jax.tree_util.tree_leaves(metrics):
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
