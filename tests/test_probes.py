@@ -28,6 +28,18 @@ def test_parameter_probe_detects_nan() -> None:
     assert float(_params_have_nan(params)) == 1.0
 
 
+def test_grads_global_norm_stays_finite_for_large_finite_values() -> None:
+    grads = {
+        "huge": jnp.asarray([1.0e20, -1.0e20], dtype=jnp.float32),
+        "small": jnp.asarray([3.0, 4.0], dtype=jnp.float32),
+    }
+
+    norm = _grads_global_norm(grads)
+
+    assert bool(jnp.isfinite(norm))
+    assert bool(jnp.allclose(norm / 1.0e20, jnp.sqrt(2.0), rtol=1e-6))
+
+
 def test_first_one_idx_returns_first_flat_hit_or_negative_one() -> None:
     flags = jnp.asarray([[0, 0, 0], [0, 1, 1]], dtype=jnp.int32)
     assert int(_first_one_idx(flags)) == 4

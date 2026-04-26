@@ -42,13 +42,21 @@ def _params_have_nan(params: Any) -> jax.Array:
 
 
 def _grads_global_norm(grads: Any) -> jax.Array:
-    """Computes the global L2 norm of a gradient pytree."""
+    """Computes the global L2 norm of a gradient pytree without square overflow."""
 
     leaves = _numeric_leaves(grads)
     if not leaves:
         return jnp.asarray(0.0, dtype=jnp.float32)
-    sq_sum = sum(jnp.sum(jnp.square(leaf.astype(jnp.float32))) for leaf in leaves)
-    return jnp.sqrt(sq_sum).astype(jnp.float32)
+    max_abs = jnp.max(
+        jnp.stack([jnp.max(jnp.abs(leaf.astype(jnp.float32))) for leaf in leaves])
+    )
+    safe_scale = jnp.where(max_abs > 0.0, max_abs, 1.0)
+    scaled_sq_sum = sum(
+        jnp.sum(jnp.square(leaf.astype(jnp.float32) / safe_scale))
+        for leaf in leaves
+    )
+    norm = safe_scale * jnp.sqrt(scaled_sq_sum)
+    return jnp.where(max_abs > 0.0, norm, 0.0).astype(jnp.float32)
 
 
 def _first_one_idx(flags: Any) -> jax.Array:

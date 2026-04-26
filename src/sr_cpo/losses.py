@@ -30,6 +30,10 @@ def contrastive_logits(sa_repr: Array, g_repr: Array, tau: float) -> Array:
     return jnp.einsum("ik,jk->ij", sa_hat, g_hat) / tau
 
 
+def _has_nonfinite(x: Array) -> Array:
+    return jnp.any(~jnp.isfinite(x)).astype(jnp.float32)
+
+
 @dataclass(frozen=True)
 class TanhGaussianSample:
     """Sample and diagnostics from a tanh-Gaussian policy."""
@@ -124,10 +128,10 @@ def critic_loss_fn(
     accuracy = jnp.mean(jnp.argmax(logits, axis=1) == jnp.arange(logits.shape[0]))
 
     probes = {
-        "nan_obs": jnp.any(jnp.isnan(observation)).astype(jnp.float32),
-        "nan_sa": jnp.any(jnp.isnan(sa_repr)).astype(jnp.float32),
-        "nan_g": jnp.any(jnp.isnan(g_repr)).astype(jnp.float32),
-        "nan_logits": jnp.any(jnp.isnan(logits)).astype(jnp.float32),
+        "nan_obs": _has_nonfinite(observation),
+        "nan_sa": _has_nonfinite(sa_repr),
+        "nan_g": _has_nonfinite(g_repr),
+        "nan_logits": _has_nonfinite(logits),
         "sa_norm_min": sa_norm_min,
         "g_norm_min": g_norm_min,
         "sa_repr_norm": sa_repr_norm,
@@ -189,10 +193,10 @@ def actor_loss_fn(
         "sat_correction_mean": jnp.mean(sample.sat_correction),
         "log_std_mean": jnp.mean(sample.log_std),
         "f_term_mean": jnp.mean(f_value) / nu_f,
-        "nan_sa": jnp.any(jnp.isnan(sa_repr)).astype(jnp.float32),
-        "nan_g": jnp.any(jnp.isnan(g_repr)).astype(jnp.float32),
-        "nan_action": jnp.any(jnp.isnan(sample.action)).astype(jnp.float32),
-        "nan_f": jnp.any(jnp.isnan(f_value)).astype(jnp.float32),
+        "nan_sa": _has_nonfinite(sa_repr),
+        "nan_g": _has_nonfinite(g_repr),
+        "nan_action": _has_nonfinite(sample.action),
+        "nan_f": _has_nonfinite(f_value),
         "sa_norm_min": sa_norm_min,
         "g_norm_min": g_norm_min,
         "action_abs_max": jnp.max(jnp.abs(sample.action)),
