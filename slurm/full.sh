@@ -55,7 +55,9 @@ echo "===== ENVIRONMENT ====="
 echo "HOST=$(hostname)"
 echo "PYTHON=$("$PYTHON" --version 2>&1)"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-not set}"
+set +o pipefail
 nvidia-smi 2>&1 | head -20
+set -o pipefail
 
 echo ""
 echo "===== STATIC DIFF + PROBE VERIFICATION ====="

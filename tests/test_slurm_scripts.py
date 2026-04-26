@@ -22,6 +22,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         assert "STATIC DIFF + PROBE VERIFICATION" in source
         assert "JAX GPU CHECK" in source
         assert "ENV PREFLIGHT" in source
+        assert "set +o pipefail\nnvidia-smi 2>&1 | head -20\nset -o pipefail" in source
 
 
 def test_slurm_static_diff_heredocs_pass_locally() -> None:
