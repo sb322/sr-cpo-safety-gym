@@ -5,17 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sr-cpo-safety-gym"
 version = "0.1.0"
-description = "SR-CPO on Safety-Gymnasium environments"
+description = "SR-CPO on Brax/MJX Safety-Gym-style environments"
 readme = "README.md"
-requires-python = ">=3.9,<3.11"
+requires-python = ">=3.11,<3.12"
 license = { text = "MIT" }
 authors = [{ name = "SR-CPO Contributors" }]
 dependencies = [
-  "torch==2.2.2",
-  "gymnasium==0.28.1",
-  "safety-gymnasium==1.0.0",
+  "jax==0.4.34",
+  "jaxlib==0.4.34",
+  "flax==0.10.2",
+  "optax==0.2.4",
+  "brax==0.12.1",
+  "mujoco==3.3.0",
+  "mujoco-mjx==3.2.7",
   "wandb==0.16.6",
-  "numpy==1.23.5",
+  "numpy==1.26.4",
   "pytest==8.2.2",
   "ruff==0.4.10",
   "mypy==1.10.0",
@@ -29,14 +33,14 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py311"
 src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.11"
 strict = true
 mypy_path = "src"
 packages = ["sr_cpo"]
