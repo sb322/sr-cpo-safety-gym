@@ -44,7 +44,6 @@ class ResidualTower(nn.Module):
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         x = jnp.asarray(x, dtype=jnp.float32)
         x = nn.Dense(self.width, kernel_init=KERNEL_INIT, bias_init=BIAS_INIT)(x)
-        x = nn.swish(nn.LayerNorm()(x))
         for _ in range(self.num_blocks):
             x = WangResidualBlock(width=self.width)(x)
         return x
