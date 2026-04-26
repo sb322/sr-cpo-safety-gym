@@ -144,7 +144,7 @@ echo "===== TRAINING ====="
     --buffer-capacity 8192 \
     --observation-dim 55 \
     --action-dim 2 \
-    --goal-dim 3 \
+    --goal-dim 55 \
     --width 256 \
     --num-blocks 4 \
     --latent-dim 64 \
