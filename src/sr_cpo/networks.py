@@ -37,9 +37,11 @@ class WangResidualBlock(nn.Module):
 class ResidualTower(nn.Module):
     """Reference-compatible MLP tower with optional Wang residual blocks.
 
-    By default this matches the reference ``skip_connections=0`` path:
-    projection Dense, LayerNorm, swish, then a plain Dense/LN/swish stack.
-    Set ``use_residual=True`` for the depth-scaling residual architecture.
+    Default ``use_residual=False`` matches the reference constrained-crl
+    ``train.py`` at its default ``Args.skip_connections=0``, so every Phase-1
+    experiment on Brax can be reproduced byte-identically on this codebase.
+    Set ``use_residual=True`` for depth-scaling experiments per the JaxGCRL
+    depth-scaling thread.
     """
 
     width: int = 256

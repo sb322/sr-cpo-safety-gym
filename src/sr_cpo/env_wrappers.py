@@ -47,9 +47,9 @@ def _cost_from_info(info: Mapping[str, Any]) -> jax.Array:
     # safe-learning sets info["cost"] after step at:
     # https://github.com/lasgroup/safe-learning/blob/aba4b94b91dbfebe48a45c3b371f9a6f8fbed606/ss2r/benchmark_suites/safety_gym/go_to_goal.py#L420-L424
     # This implies Bellman-B: cost is c(s_{t+1}), not c(s_t).
-    # This differs from cost-at-state Bellman-A by a gamma scaling on J_c.
-    # Cost-critic targets use transition.extras["cost"] as c(s_{t+1}):
-    # y_t = c(s_{t+1}) + gamma * (1 - d) * Q_c_bar(s_{t+1}, a', g).
+    # Bellman-B differs from cost-at-state Bellman-A by gamma-scaling on J_c.
+    # Cost-critic targets use transition.extras["cost"] as c(s_{t+1}), so:
+    # y_t = c(s_{t+1}) + γ·(1-d)·Q_c^bar(s_{t+1}, a', g).
     return jnp.asarray(_info_array(info, "cost"), dtype=jnp.float32)
 
 
