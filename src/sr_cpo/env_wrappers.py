@@ -44,12 +44,12 @@ def _info_array(
 
 
 def _cost_from_info(info: Mapping[str, Any]) -> jax.Array:
-    # Upstream convention:
-    # https://github.com/lasgroup/safe-learning/blob/aba4b94b91dbfebe48a45c3b371f9a6f8fbed606/ss2r/benchmark_suites/safety_gym/go_to_goal.py#L383-L428
-    # reset initializes info["cost"] to 0.0. step first advances physics to
-    # post-action data, then sets info["cost"] = get_cost(data), where get_cost
-    # is a positional predicate on that post-step data. Step transitions must
-    # therefore read next_state.info["cost"], not state.info.
+    # safe-learning sets info["cost"] after step at:
+    # https://github.com/lasgroup/safe-learning/blob/aba4b94b91dbfebe48a45c3b371f9a6f8fbed606/ss2r/benchmark_suites/safety_gym/go_to_goal.py#L420-L424
+    # This implies Bellman-B: cost is c(s_{t+1}), not c(s_t).
+    # This differs from cost-at-state Bellman-A by a gamma scaling on J_c.
+    # Cost-critic targets use transition.extras["cost"] as c(s_{t+1}):
+    # y_t = c(s_{t+1}) + gamma * (1 - d) * Q_c_bar(s_{t+1}, a', g).
     return jnp.asarray(_info_array(info, "cost"), dtype=jnp.float32)
 
 
