@@ -44,10 +44,12 @@ def _info_array(
 
 
 def _cost_from_info(info: Mapping[str, Any]) -> jax.Array:
-    # safe-learning GoToGoal.reset initializes info["cost"] to 0.0. Its step
-    # first advances physics to post-action data, then sets info["cost"] from
-    # get_cost(data), so step cost is the post-step transition cost. Step
-    # transitions must therefore read next_state.info["cost"], not state.info.
+    # Upstream convention:
+    # https://github.com/lasgroup/safe-learning/blob/aba4b94b91dbfebe48a45c3b371f9a6f8fbed606/ss2r/benchmark_suites/safety_gym/go_to_goal.py#L383-L428
+    # reset initializes info["cost"] to 0.0. step first advances physics to
+    # post-action data, then sets info["cost"] = get_cost(data), where get_cost
+    # is a positional predicate on that post-step data. Step transitions must
+    # therefore read next_state.info["cost"], not state.info.
     return jnp.asarray(_info_array(info, "cost"), dtype=jnp.float32)
 
 
