@@ -23,6 +23,7 @@ dependencies = [
   "pytest==8.2.2",
   "ruff==0.4.10",
   "mypy==1.10.0",
+  "tyro==0.9.13",
 ]
 
 [tool.setuptools.packages.find]
