@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
+import site
+import sys
+import types
 from collections.abc import Mapping
+from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -23,6 +29,16 @@ class Transition:
 
 
 def _load_safe_learning_go_to_goal(**env_kwargs: Any) -> Any:
+    go_to_goal = _load_safe_learning_go_to_goal_class()
+    return go_to_goal(**env_kwargs)
+
+
+def _load_safe_learning_go_to_goal_class() -> type[Any]:
+    module_path = _find_safe_learning_go_to_goal()
+    if module_path is not None:
+        module = _load_safe_learning_module_without_parent_init(module_path)
+        return module.GoToGoal
+
     try:
         from ss2r.benchmark_suites.safety_gym.go_to_goal import GoToGoal
     except ImportError as exc:  # pragma: no cover - exercised only off-repo
@@ -30,7 +46,54 @@ def _load_safe_learning_go_to_goal(**env_kwargs: Any) -> Any:
             "safe-learning's ss2r package is required for the real GoToGoal env. "
             "Install lasgroup/safe-learning or put it on PYTHONPATH."
         ) from exc
-    return GoToGoal(**env_kwargs)
+    return GoToGoal
+
+
+def _find_safe_learning_go_to_goal() -> Path | None:
+    candidates: list[str] = []
+    with suppress(AttributeError):
+        candidates.extend(site.getsitepackages())
+    with suppress(AttributeError):
+        candidates.append(site.getusersitepackages())
+    for base in candidates:
+        path = (
+            Path(base)
+            / "ss2r"
+            / "benchmark_suites"
+            / "safety_gym"
+            / "go_to_goal.py"
+        )
+        if path.exists():
+            return path
+    return None
+
+
+def _ensure_namespace_package(name: str, path: Path) -> None:
+    if name in sys.modules:
+        return
+    module = types.ModuleType(name)
+    module.__path__ = [str(path)]  # type: ignore[attr-defined]
+    sys.modules[name] = module
+
+
+def _load_safe_learning_module_without_parent_init(module_path: Path) -> Any:
+    """Loads GoToGoal while bypassing safe-learning's broad package imports."""
+
+    ss2r_root = module_path.parents[2]
+    benchmark_root = module_path.parents[1]
+    safety_root = module_path.parent
+    _ensure_namespace_package("ss2r", ss2r_root)
+    _ensure_namespace_package("ss2r.benchmark_suites", benchmark_root)
+    _ensure_namespace_package("ss2r.benchmark_suites.safety_gym", safety_root)
+
+    name = "ss2r.benchmark_suites.safety_gym.go_to_goal"
+    spec = importlib.util.spec_from_file_location(name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load safe-learning GoToGoal from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _info_array(

@@ -4,7 +4,10 @@ import jax
 import jax.numpy as jnp
 from brax.envs.base import Env, State
 
-from sr_cpo.env_wrappers import SafeLearningGoToGoalAdapter
+from sr_cpo.env_wrappers import (
+    SafeLearningGoToGoalAdapter,
+    _load_safe_learning_go_to_goal_class,
+)
 
 
 class FakeGoToGoal(Env):
@@ -94,3 +97,28 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert bool(jnp.all(discount_is_binary))
     assert bool(jnp.allclose(transition.extras["cost"], next_state.info["cost"]))
     assert bool(jnp.allclose(transition.extras["cost"], fake_env.documented_step_cost))
+
+
+def test_safe_learning_loader_bypasses_broad_benchmark_suite_init(
+    tmp_path, monkeypatch
+) -> None:
+    package_root = tmp_path / "site"
+    safety_root = package_root / "ss2r" / "benchmark_suites" / "safety_gym"
+    safety_root.mkdir(parents=True)
+    (package_root / "ss2r" / "__init__.py").write_text("")
+    (package_root / "ss2r" / "benchmark_suites" / "__init__.py").write_text(
+        "raise RuntimeError('broad init should not run')\n"
+    )
+    (safety_root / "__init__.py").write_text("")
+    (safety_root / "go_to_goal.py").write_text(
+        "class GoToGoal:\n"
+        "    def __init__(self, **kwargs):\n"
+        "        self.kwargs = kwargs\n"
+    )
+    monkeypatch.setattr("site.getsitepackages", lambda: [str(package_root)])
+    monkeypatch.setattr("site.getusersitepackages", lambda: str(package_root))
+
+    loaded = _load_safe_learning_go_to_goal_class()
+    env = loaded(example=True)
+
+    assert env.kwargs == {"example": True}
