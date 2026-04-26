@@ -165,6 +165,8 @@ def actor_loss_fn(
 
     sa_repr = sa_encoder.apply(critic_params["sa_encoder"], state, sample.action)
     g_repr = g_encoder.apply(critic_params["g_encoder"], goal_arr)
+    sa_norm_min = jnp.min(jnp.linalg.norm(sa_repr, axis=-1))
+    g_norm_min = jnp.min(jnp.linalg.norm(g_repr, axis=-1))
     sa_hat, _ = row_l2_normalize(sa_repr)
     g_hat, _ = row_l2_normalize(g_repr)
     f_value = jnp.sum(sa_hat * g_hat, axis=-1) / tau
@@ -187,6 +189,13 @@ def actor_loss_fn(
         "sat_correction_mean": jnp.mean(sample.sat_correction),
         "log_std_mean": jnp.mean(sample.log_std),
         "f_term_mean": jnp.mean(f_value) / nu_f,
+        "nan_sa": jnp.any(jnp.isnan(sa_repr)).astype(jnp.float32),
+        "nan_g": jnp.any(jnp.isnan(g_repr)).astype(jnp.float32),
+        "nan_action": jnp.any(jnp.isnan(sample.action)).astype(jnp.float32),
+        "nan_f": jnp.any(jnp.isnan(f_value)).astype(jnp.float32),
+        "sa_norm_min": sa_norm_min,
+        "g_norm_min": g_norm_min,
+        "action_abs_max": jnp.max(jnp.abs(sample.action)),
     }
     return loss, probes
 
