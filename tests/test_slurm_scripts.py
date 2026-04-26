@@ -24,6 +24,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         assert "ENV PREFLIGHT" in source
         assert "--use-real-env" in source
         assert "--observation-dim 55" in source
+        assert "--grad-clip-norm 10.0" in source
         assert "set +o pipefail\nnvidia-smi 2>&1 | head -20\nset -o pipefail" in source
 
 

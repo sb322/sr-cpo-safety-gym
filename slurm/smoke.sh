@@ -149,6 +149,7 @@ echo "===== TRAINING ====="
     --num-blocks 4 \
     --latent-dim 64 \
     --learning-rate 3e-4 \
+    --grad-clip-norm 10.0 \
     --tau 0.1 \
     --rho 0.1 \
     --gamma-c 0.99 \

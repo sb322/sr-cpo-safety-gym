@@ -69,6 +69,7 @@ class TrainConfig:
     latent_dim: int = 32
     use_residual: bool = False
     learning_rate: float = 3e-4
+    grad_clip_norm: float = 10.0
     tau: float = 0.1
     rho: float = 0.1
     gamma_c: float = 0.99
@@ -655,9 +656,9 @@ def initialize_training(
     }
     cost_critic_params = cost_critic.init(cc_key, dummy_state, dummy_action, dummy_goal)
 
-    actor_optimizer = optax.adam(config.learning_rate)
-    critic_optimizer = optax.adam(config.learning_rate)
-    cost_optimizer = optax.adam(config.learning_rate)
+    actor_optimizer = _make_optimizer(config)
+    critic_optimizer = _make_optimizer(config)
+    cost_optimizer = _make_optimizer(config)
     alpha_optimizer = optax.adam(config.learning_rate)
     replay = make_replay_buffer(
         capacity=config.buffer_capacity,
@@ -694,6 +695,15 @@ def initialize_training(
         env_adapter=env_adapter,
     )
     return state, objects
+
+
+def _make_optimizer(config: TrainConfig) -> optax.GradientTransformation:
+    if config.grad_clip_norm <= 0.0:
+        return optax.adam(config.learning_rate)
+    return optax.chain(
+        optax.clip_by_global_norm(config.grad_clip_norm),
+        optax.adam(config.learning_rate),
+    )
 
 
 def prefill_buffer(

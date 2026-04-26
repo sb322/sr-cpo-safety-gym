@@ -114,6 +114,21 @@ def test_training_epoch_can_collect_from_real_env_adapter_path() -> None:
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
 
+def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
+    config = _tiny_config()
+    _, objects = initialize_training(config)
+
+    huge_grads = {"w": jnp.asarray([1.0e20, 0.0], dtype=jnp.float32)}
+    params = {"w": jnp.zeros((2,), dtype=jnp.float32)}
+    updates, _ = objects.critic_optimizer.update(
+        huge_grads, objects.critic_optimizer.init(params), params
+    )
+
+    update_norm = jnp.linalg.norm(updates["w"])
+    assert bool(jnp.isfinite(update_norm))
+    assert bool(update_norm < config.learning_rate * 2.0)
+
+
 def test_run_training_prints_required_probe_sections() -> None:
     lines: list[str] = []
     result = run_training(_tiny_config(), print_fn=lines.append)
