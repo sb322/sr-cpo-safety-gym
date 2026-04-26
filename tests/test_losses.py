@@ -4,8 +4,13 @@ import jax
 import jax.numpy as jnp
 
 from sr_cpo.env_wrappers import Transition
-from sr_cpo.losses import contrastive_logits, critic_loss_fn
-from sr_cpo.networks import GEncoder, SAEncoder
+from sr_cpo.losses import (
+    actor_loss_fn,
+    contrastive_logits,
+    critic_loss_fn,
+    sample_tanh_gaussian,
+)
+from sr_cpo.networks import Actor, CostCritic, GEncoder, SAEncoder
 
 
 def _assert_finite_tree(tree: object) -> None:
@@ -52,6 +57,61 @@ def _critic_setup(
         "g_encoder": g_encoder.init(g_key, goal),
     }
     return params, transition, sa_encoder, g_encoder, goal
+
+
+def _actor_setup(
+    *,
+    zero_row: bool = False,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    object,
+    Transition,
+    Actor,
+    SAEncoder,
+    GEncoder,
+    CostCritic,
+]:
+    batch_size = 4
+    state_dim = 6
+    action_dim = 2
+    goal_dim = 3
+    key = jax.random.PRNGKey(42)
+    keys = jax.random.split(key, 8)
+    state = jax.random.normal(keys[0], (batch_size, state_dim), dtype=jnp.float32)
+    action = jax.random.normal(keys[1], (batch_size, action_dim), dtype=jnp.float32)
+    goal = jax.random.normal(keys[2], (batch_size, goal_dim), dtype=jnp.float32)
+    if zero_row:
+        state = state.at[0].set(jnp.zeros((state_dim,), dtype=jnp.float32))
+        goal = goal.at[0].set(jnp.zeros((goal_dim,), dtype=jnp.float32))
+
+    transition = Transition(
+        observation=state,
+        action=action,
+        reward=jnp.zeros((batch_size,), dtype=jnp.float32),
+        discount=jnp.ones((batch_size,), dtype=jnp.float32),
+        extras={"goal": goal},
+    )
+    actor = Actor(action_size=action_dim)
+    sa_encoder = SAEncoder()
+    g_encoder = GEncoder()
+    cost_critic = CostCritic()
+    actor_params = actor.init(keys[3], state, goal)
+    critic_params = {
+        "sa_encoder": sa_encoder.init(keys[4], state, action),
+        "g_encoder": g_encoder.init(keys[5], goal),
+    }
+    cost_critic_params = cost_critic.init(keys[6], state, action, goal)
+    return (
+        actor_params,
+        critic_params,
+        cost_critic_params,
+        transition,
+        actor,
+        sa_encoder,
+        g_encoder,
+        cost_critic,
+    )
 
 
 def test_critic_loss_forward_finite_on_random_batch() -> None:
@@ -106,3 +166,93 @@ def test_contrastive_logits_are_temperature_bounded_after_row_l2() -> None:
 
     assert bool(jnp.all(jnp.isfinite(logits)))
     assert bool(jnp.all(jnp.abs(logits) <= (1.0 / tau) + 1e-6))
+
+
+def test_actor_loss_forward_and_grad_finite_on_random_batch() -> None:
+    (
+        actor_params,
+        critic_params,
+        cost_critic_params,
+        transition,
+        actor,
+        sa_encoder,
+        g_encoder,
+        cost_critic,
+    ) = _actor_setup()
+    tau = 0.1
+    loss_fn = partial(
+        actor_loss_fn,
+        critic_params=critic_params,
+        cost_critic_params=cost_critic_params,
+        transitions=transition,
+        key=jax.random.PRNGKey(7),
+        actor=actor,
+        sa_encoder=sa_encoder,
+        g_encoder=g_encoder,
+        cost_critic=cost_critic,
+        log_alpha=jnp.array(0.0, dtype=jnp.float32),
+        lambda_tilde=jnp.array(0.5, dtype=jnp.float32),
+        tau=tau,
+        nu_f=1.0,
+        nu_c=1.0,
+    )
+
+    (loss, probes), grads = jax.value_and_grad(loss_fn, has_aux=True)(actor_params)
+
+    assert bool(jnp.isfinite(loss))
+    _assert_finite_tree(probes)
+    _assert_finite_tree(grads)
+    assert bool(jnp.abs(probes["f_term_mean"]) <= (1.0 / tau) + 1e-6)
+
+
+def test_actor_loss_forward_and_grad_finite_with_zero_row_inputs() -> None:
+    (
+        actor_params,
+        critic_params,
+        cost_critic_params,
+        transition,
+        actor,
+        sa_encoder,
+        g_encoder,
+        cost_critic,
+    ) = _actor_setup(zero_row=True)
+    tau = 0.1
+    loss_fn = partial(
+        actor_loss_fn,
+        critic_params=critic_params,
+        cost_critic_params=cost_critic_params,
+        transitions=transition,
+        key=jax.random.PRNGKey(8),
+        actor=actor,
+        sa_encoder=sa_encoder,
+        g_encoder=g_encoder,
+        cost_critic=cost_critic,
+        log_alpha=jnp.array(0.0, dtype=jnp.float32),
+        lambda_tilde=jnp.array(0.5, dtype=jnp.float32),
+        tau=tau,
+        nu_f=1.0,
+        nu_c=1.0,
+    )
+
+    (loss, probes), grads = jax.value_and_grad(loss_fn, has_aux=True)(actor_params)
+
+    assert bool(jnp.isfinite(loss))
+    _assert_finite_tree(probes)
+    _assert_finite_tree(grads)
+    assert bool(jnp.abs(probes["f_term_mean"]) <= (1.0 / tau) + 1e-6)
+
+
+def test_actor_sampling_respects_log_std_clipping() -> None:
+    actor_params, _, _, transition, actor, *_ = _actor_setup()
+    goal = transition.extras["goal"]
+
+    sample = sample_tanh_gaussian(
+        actor,
+        actor_params,
+        transition.observation,
+        goal,
+        jax.random.PRNGKey(9),
+    )
+
+    assert bool(jnp.all(sample.log_std >= -5.0))
+    assert bool(jnp.all(sample.log_std <= 2.0))

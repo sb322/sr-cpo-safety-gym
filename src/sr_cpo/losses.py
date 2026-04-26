@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import jax
 import jax.numpy as jnp
+from flax import linen as nn
 
 Array = jax.Array
 Params = Mapping[str, Any]
+LOG_2 = jnp.log(2.0)
 
 
 def row_l2_normalize(x: Array, eps: float = 1e-12) -> tuple[Array, Array]:
@@ -25,6 +28,48 @@ def contrastive_logits(sa_repr: Array, g_repr: Array, tau: float) -> Array:
     sa_hat, _ = row_l2_normalize(sa_repr)
     g_hat, _ = row_l2_normalize(g_repr)
     return jnp.einsum("ik,jk->ij", sa_hat, g_hat) / tau
+
+
+@dataclass(frozen=True)
+class TanhGaussianSample:
+    """Sample and diagnostics from a tanh-Gaussian policy."""
+
+    action: Array
+    log_prob: Array
+    gaussian_logp: Array
+    sat_correction: Array
+    log_std: Array
+
+
+def sample_tanh_gaussian(
+    actor: Any,
+    actor_params: Params,
+    state: Array,
+    goal: Array,
+    key: Array,
+) -> TanhGaussianSample:
+    """Samples a reparameterized tanh-Gaussian action and its log density."""
+
+    mean, log_std = actor.apply(actor_params, state, goal)
+    std = jnp.exp(log_std)
+    pre_tanh = mean + std * jax.random.normal(key, shape=mean.shape)
+    action = nn.tanh(pre_tanh)
+    gaussian_logp = (
+        -0.5 * jnp.square((pre_tanh - mean) / std)
+        - log_std
+        - 0.5 * jnp.log(2.0 * jnp.pi)
+    ).sum(axis=-1)
+    sat_correction = (2.0 * (LOG_2 - pre_tanh - nn.softplus(-2.0 * pre_tanh))).sum(
+        axis=-1
+    )
+    log_prob = gaussian_logp - sat_correction
+    return TanhGaussianSample(
+        action=action,
+        log_prob=log_prob,
+        gaussian_logp=gaussian_logp,
+        sat_correction=sat_correction,
+        log_std=log_std,
+    )
 
 
 def _extras(transitions: Any) -> Mapping[str, Any]:
@@ -90,5 +135,57 @@ def critic_loss_fn(
         "logits_pos": logits_pos,
         "logits_neg": logits_neg,
         "accuracy": accuracy.astype(jnp.float32),
+    }
+    return loss, probes
+
+
+def actor_loss_fn(
+    actor_params: Params,
+    critic_params: Params,
+    cost_critic_params: Params,
+    transitions: Any,
+    key: Array,
+    *,
+    actor: Any,
+    sa_encoder: Any,
+    g_encoder: Any,
+    cost_critic: Any,
+    log_alpha: Array,
+    lambda_tilde: Array,
+    tau: float = 0.1,
+    nu_f: float = 1.0,
+    nu_c: float = 1.0,
+    goal: Array | None = None,
+) -> tuple[Array, dict[str, Array]]:
+    """Preconditioned SR-CPO actor loss with component probes."""
+
+    state = jnp.asarray(transitions.observation, dtype=jnp.float32)
+    goal_arr = _goal_from_transitions(transitions, goal)
+    sample = sample_tanh_gaussian(actor, actor_params, state, goal_arr, key)
+
+    sa_repr = sa_encoder.apply(critic_params["sa_encoder"], state, sample.action)
+    g_repr = g_encoder.apply(critic_params["g_encoder"], goal_arr)
+    sa_hat, _ = row_l2_normalize(sa_repr)
+    g_hat, _ = row_l2_normalize(g_repr)
+    f_value = jnp.sum(sa_hat * g_hat, axis=-1) / tau
+
+    alpha = jnp.exp(log_alpha)
+    qc_value = cost_critic.apply(
+        cost_critic_params, state, sample.action, goal_arr
+    )
+    loss = jnp.mean(
+        alpha * sample.log_prob
+        - f_value / nu_f
+        + lambda_tilde * qc_value / nu_c
+    )
+
+    probes = {
+        "alpha": alpha,
+        "log_prob_mean": jnp.mean(sample.log_prob),
+        "alpha_logprob_mean": alpha * jnp.mean(sample.log_prob),
+        "gaussian_logp_mean": jnp.mean(sample.gaussian_logp),
+        "sat_correction_mean": jnp.mean(sample.sat_correction),
+        "log_std_mean": jnp.mean(sample.log_std),
+        "f_term_mean": jnp.mean(f_value) / nu_f,
     }
     return loss, probes
