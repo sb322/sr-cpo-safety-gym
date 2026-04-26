@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools==69.5.1", "wheel==0.43.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sr-cpo-safety-gym"
+version = "0.1.0"
+description = "SR-CPO on Safety-Gymnasium environments"
+readme = "README.md"
+requires-python = ">=3.9,<3.11"
+license = { text = "MIT" }
+authors = [{ name = "SR-CPO Contributors" }]
+dependencies = [
+  "torch==2.2.2",
+  "gymnasium==0.28.1",
+  "safety-gymnasium==1.0.0",
+  "wandb==0.16.6",
+  "numpy==1.23.5",
+  "pytest==8.2.2",
+  "ruff==0.4.10",
+  "mypy==1.10.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+mypy_path = "src"
+packages = ["sr_cpo"]
