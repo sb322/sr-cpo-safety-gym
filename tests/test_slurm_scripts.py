@@ -250,8 +250,14 @@ def test_goal_conditioning_sweep_compares_full_obs_and_goal_lidar() -> None:
     assert '--goal-start "$GOAL_START"' in source
     assert '--goal-dim "$GOAL_DIM"' in source
     assert "goal_start=config.goal_start" in source
+    assert "_assert_goal_shape" in source
+    assert "src_replay" in source
     assert "goal_dist" in source
     assert "goal_reached" in source
+    assert "goal_slice_mean" in source
+    assert "goal_slice_std" in source
+    assert "gstart=" in source
+    assert "gdim=" in source
 
 
 def test_production_launchers_use_calibrated_cost_limit() -> None:

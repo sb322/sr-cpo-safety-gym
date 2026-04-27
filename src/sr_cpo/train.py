@@ -20,6 +20,7 @@ from flax import struct
 
 from sr_cpo.dual_estimator import estimate_discounted_cost
 from sr_cpo.env_wrappers import Transition, make_safe_learning_go_to_goal
+from sr_cpo.goal_space import _assert_goal_shape, _goal_from_obs
 from sr_cpo.losses import (
     actor_loss_fn,
     alpha_loss_fn,
@@ -129,10 +130,6 @@ class TrainState:
     pid_state: PIDState
 
 
-def _goal_from_obs(obs: Array, goal_start: int, goal_dim: int) -> Array:
-    return jnp.asarray(obs[..., goal_start : goal_start + goal_dim], dtype=jnp.float32)
-
-
 def _pad_action(action: Array, observation_dim: int) -> Array:
     pad = observation_dim - action.shape[-1]
     return jnp.pad(action, [(0, 0)] * (action.ndim - 1) + [(0, pad)])
@@ -201,6 +198,7 @@ def _collect_toy_trajectory(
         step_key, env_state = carry
         step_key, actor_key, env_key = jax.random.split(step_key, 3)
         goal = jnp.zeros((config.num_envs, config.goal_dim), dtype=jnp.float32)
+        _assert_goal_shape(goal, config.goal_dim, context="toy actor rollout")
         sample = sample_tanh_gaussian(
             objects.actor,
             train_state.actor_params,
@@ -227,6 +225,10 @@ def _collect_toy_trajectory(
         ],
         axis=0,
     )
+    rollout_goals = jnp.zeros(
+        (config.unroll_length, config.num_envs, config.goal_dim),
+        dtype=jnp.float32,
+    )
     replay = _insert_vector_trajectories(
         train_state.replay,
         observations=observations,
@@ -243,6 +245,8 @@ def _collect_toy_trajectory(
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
         "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
+        "goal_slice_mean": jnp.mean(rollout_goals),
+        "goal_slice_std": jnp.std(rollout_goals),
     }
     next_state = train_state.replace(
         key=key,
@@ -270,6 +274,7 @@ def _collect_real_trajectory(
         step_key, env_state = carry
         step_key, actor_key = jax.random.split(step_key)
         goal = _goal_from_obs(env_state.obs, config.goal_start, config.goal_dim)
+        _assert_goal_shape(goal, config.goal_dim, context="real actor rollout")
         sample = sample_tanh_gaussian(
             objects.actor,
             train_state.actor_params,
@@ -294,6 +299,12 @@ def _collect_real_trajectory(
         ],
         axis=0,
     )
+    rollout_goals = _goal_from_obs(
+        observations[:-1], config.goal_start, config.goal_dim
+    )
+    _assert_goal_shape(
+        rollout_goals, config.goal_dim, context="real actor rollout metrics"
+    )
     replay = _insert_vector_trajectories(
         train_state.replay,
         observations=observations,
@@ -310,6 +321,8 @@ def _collect_real_trajectory(
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
         "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
+        "goal_slice_mean": jnp.mean(rollout_goals),
+        "goal_slice_std": jnp.std(rollout_goals),
     }
     next_state = train_state.replace(
         key=key,
@@ -385,6 +398,9 @@ def _sgd_step(
         batch_size=config.batch_size,
         goal_start=config.goal_start,
         goal_end=config.goal_start + config.goal_dim,
+    )
+    _assert_goal_shape(
+        batch.extras["goal"], config.goal_dim, context="hindsight critic"
     )
 
     def critic_objective(params: Any) -> tuple[Array, dict[str, Array]]:
@@ -606,6 +622,10 @@ def make_training_epoch(
         metrics["rollout_reward"] = collect_metrics["reward"]
         metrics["goal_dist"] = collect_metrics["goal_dist"]
         metrics["goal_reached"] = collect_metrics["goal_reached"]
+        metrics["goal_start"] = jnp.asarray(config.goal_start, dtype=jnp.float32)
+        metrics["goal_dim"] = jnp.asarray(config.goal_dim, dtype=jnp.float32)
+        metrics["goal_slice_mean"] = collect_metrics["goal_slice_mean"]
+        metrics["goal_slice_std"] = collect_metrics["goal_slice_std"]
         return state, metrics
 
     @jax.jit
@@ -798,6 +818,10 @@ def format_epoch_metrics(
                 f"rew={_mean_float(metrics, 'rollout_reward'):.4f} "
                 f"gdist={_mean_float(metrics, 'goal_dist'):.4f} "
                 f"reached={_mean_float(metrics, 'goal_reached'):.4f} "
+                f"gstart={_mean_float(metrics, 'goal_start'):.0f} "
+                f"gdim={_mean_float(metrics, 'goal_dim'):.0f} "
+                f"gmean={_mean_float(metrics, 'goal_slice_mean'):.3f} "
+                f"gstd={_mean_float(metrics, 'goal_slice_std'):.3f} "
                 f"λ̃={_mean_float(metrics, 'lambda_tilde'):.4f} "
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
                 f"Qc={_mean_float(metrics, 'qc'):.4f} "

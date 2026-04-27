@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from flax import struct
 
 from sr_cpo.env_wrappers import Transition
+from sr_cpo.goal_space import _goal_from_obs
 
 
 @struct.dataclass
@@ -112,7 +113,7 @@ def sample_hindsight_transitions(
     obs = buffer.observations[traj_idx, step_idx]
     next_obs = buffer.observations[traj_idx, step_idx + 1]
     future_state = buffer.observations[traj_idx, future_idx]
-    goal = future_state[:, goal_start:goal_end]
+    goal = _goal_from_obs(future_state, goal_start, goal_end - goal_start)
     action = buffer.actions[traj_idx, step_idx]
     reward = buffer.rewards[traj_idx, step_idx]
     discount = buffer.discounts[traj_idx, step_idx]

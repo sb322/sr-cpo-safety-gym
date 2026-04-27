@@ -128,6 +128,10 @@ def test_training_epoch_accepts_configured_goal_slice() -> None:
     _, metrics = training_epoch(state)
 
     assert metrics["goal_dist"].shape == (config.steps_per_epoch,)
+    assert bool(jnp.all(metrics["goal_start"] == config.goal_start))
+    assert bool(jnp.all(metrics["goal_dim"] == config.goal_dim))
+    assert bool(jnp.all(metrics["goal_slice_mean"] == 0.0))
+    assert bool(jnp.all(metrics["goal_slice_std"] == 0.0))
     for leaf in jax.tree_util.tree_leaves(metrics):
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
@@ -186,6 +190,10 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "rollout_reward": jnp.asarray([-1.2345]),
         "goal_dist": jnp.asarray([0.42]),
         "goal_reached": jnp.asarray([0.25]),
+        "goal_start": jnp.asarray([16.0]),
+        "goal_dim": jnp.asarray([16.0]),
+        "goal_slice_mean": jnp.asarray([0.125]),
+        "goal_slice_std": jnp.asarray([0.25]),
         "lambda_tilde": jnp.asarray([0.0]),
         "jc_hat": jnp.asarray([0.0]),
         "qc": jnp.asarray([0.0]),
@@ -236,6 +244,10 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "rew=-1.2345" in text
     assert "gdist=0.4200" in text
     assert "reached=0.2500" in text
+    assert "gstart=16" in text
+    assert "gdim=16" in text
+    assert "gmean=0.125" in text
+    assert "gstd=0.250" in text
     assert "limit=1.00e-04" in text
     assert "pid_err=-1.00e-04" in text
     assert "S=-1.00e-03" in text

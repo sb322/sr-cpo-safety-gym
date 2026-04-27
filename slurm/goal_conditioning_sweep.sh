@@ -96,6 +96,7 @@ echo "===== STATIC DIFF + PROBE VERIFICATION ====="
 import pathlib
 src_losses = pathlib.Path("src/sr_cpo/losses.py").read_text()
 src_train  = pathlib.Path("src/sr_cpo/train.py").read_text()
+src_replay = pathlib.Path("src/sr_cpo/replay_buffer.py").read_text()
 src_networks = pathlib.Path("src/sr_cpo/networks.py").read_text()
 
 # Algorithm patterns this run depends on. If you change the algorithm,
@@ -119,6 +120,7 @@ for marker in [
     "c_grad_nan", "a_grad_nan", "cc_grad_nan",
     "pid_error", "pid_integral", "pid_raw_lambda", "lambda_qc_actor",
     "goal_dist", "goal_reached", "gdist=", "reached=",
+    "goal_slice_mean", "goal_slice_std", "gstart=", "gdim=", "gmean=", "gstd=",
 ]:
     assert marker in src_losses or marker in src_train, f"probe missing - {marker}"
 
@@ -130,6 +132,8 @@ assert "cost_limit: float = 0.0001" in src_train, \
 assert "goal_start: int = 0" in src_train, "goal-slice start missing from TrainConfig"
 assert "goal_start=config.goal_start" in src_train, \
     "hindsight goal sampling does not use TrainConfig.goal_start"
+assert "_assert_goal_shape" in src_train and "_goal_from_obs" in src_replay, \
+    "actor and hindsight critic goals are not guarded by the shared goal-space path"
 assert "use_residual: bool = False" in src_train, \
     "TrainConfig residual switch missing"
 assert "WangResidualBlock" in src_networks and "use_residual" in src_networks, \
