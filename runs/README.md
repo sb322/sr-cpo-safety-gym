@@ -49,3 +49,32 @@ Follow-up:
   `cost_limit=0.0001`, to a three-seed baseline over seeds `0`, `1`, and `2`.
 - `cost_limit=0.0001` is now the calibrated production default for
   `TrainConfig`, `slurm/smoke.sh`, and `slurm/full.sh`.
+
+## 2026-04-27 - Job 1010605 - Calibrated 3-Seed Baseline
+
+- Script: `slurm/baseline_cl0001_3seed.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `506b7f3 fix(train): promote calibrated cost limit default`
+- Result: all three array tasks `COMPLETED 0:0`
+- Cost limit: `0.0001`
+- Seeds: `0`, `1`, `2`
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_base_cl0001.1010605_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_base_cl0001.1010605_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_base_cl0001.1010605_2.out`
+
+Tail diagnostics:
+
+| Seed | Lambda tail | J_c tail | Cost tail | Hard violation tail | Critic acc tail |
+|---|---:|---:|---:|---:|---:|
+| 0 | `0.0095` | `0.0005` | `0.0462` | `0.0392` | `0.234` |
+| 1 | `0.0129` | `0.0001` | `0.0123` | `0.0060` | `0.120` |
+| 2 | `0.0000` | `0.0001` | `0.0066` | `0.0078` | `0.030` |
+
+All three seeds kept NaN probes and parameter-NaN probes at zero. Gradient
+norms stayed in the healthy single-digit to low-double-digit range. The
+calibrated limit activates the dual when the critic estimate is above budget
+or near the boundary, while seed 2 stays inactive because both rollout cost and
+estimated cost are already low. This validates `0.0001` as the first production
+constraint setting. The next experiment should sweep PID gains at this fixed
+budget, because the remaining variation is controller response, not plumbing.
