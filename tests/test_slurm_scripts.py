@@ -16,6 +16,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/smoke.sh",
         "slurm/full.sh",
         "slurm/diagnostic_cost_limit.sh",
+        "slurm/baseline_cl0001_3seed.sh",
     ):
         source = Path(script).read_text()
 
@@ -43,11 +44,23 @@ def test_cost_limit_diagnostic_script_is_array_sweep() -> None:
     assert '--cost-limit "$COST_LIMIT"' in source
 
 
+def test_cl0001_baseline_script_is_three_seed_array() -> None:
+    source = Path("slurm/baseline_cl0001_3seed.sh").read_text()
+
+    assert "#SBATCH --array=0-2" in source
+    assert "safe_base_cl0001.%A_%a.out" in source
+    assert 'SEEDS=("0" "1" "2")' in source
+    assert 'COST_LIMIT="0.0001"' in source
+    assert '--seed "$SEED"' in source
+    assert '--cost-limit "$COST_LIMIT"' in source
+
+
 def test_slurm_static_diff_heredocs_pass_locally() -> None:
     for script in (
         "slurm/smoke.sh",
         "slurm/full.sh",
         "slurm/diagnostic_cost_limit.sh",
+        "slurm/baseline_cl0001_3seed.sh",
     ):
         block = _static_check_block(script)
 
