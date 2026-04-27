@@ -40,3 +40,8 @@ collection, full-observation hindsight goal relabeling, probe wiring, alpha cap,
 gradient clipping, and SLURM static checks. Next experiments should vary the
 constraint scale, `cost_limit`, or PID gains because the dual remained inactive
 under the current critic-based `J_c` scale.
+
+Follow-up:
+
+- `slurm/diagnostic_cost_limit.sh` launches a three-point `cost_limit` array
+  sweep over `0.001`, `0.0005`, and `0.0001` using the same real-env settings.
