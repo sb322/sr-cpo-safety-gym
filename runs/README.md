@@ -84,3 +84,30 @@ Follow-up:
 - `slurm/pid_gain_sweep.sh` runs seed `0` at fixed `cost_limit=0.0001` over
   `(Kp, Ki, Kd)` settings `(2.5, 0.05, 0.0)`, `(5.0, 0.1, 0.0)`, and
   `(10.0, 0.2, 0.0)` to compare controller response.
+
+## 2026-04-27 - Job 1010634 - PID Gain Sweep
+
+- Script: `slurm/pid_gain_sweep.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `19e1920 feat(slurm): add pid gain sweep`
+- Result: all three array tasks `COMPLETED 0:0`
+- Seed: `0`
+- Cost limit: `0.0001`
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pid.1010634_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pid.1010634_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pid.1010634_2.out`
+
+Tail diagnostics:
+
+| Label | Kp | Ki | Lambda tail | J_c tail | Cost tail | Hard violation tail | Critic acc tail |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `pid_soft` | `2.5` | `0.05` | `0.0051` | `0.0004` | `0.0379` | `0.0403` | `0.259` |
+| `pid_base` | `5.0` | `0.1` | `0.0097` | `0.0003` | `0.0299` | `0.0256` | `0.221` |
+| `pid_strong` | `10.0` | `0.2` | `0.0196` | `0.0004` | `0.0377` | `0.0320` | `0.230` |
+
+All three settings kept NaN probes and parameter-NaN probes at zero. Gradient
+norms stayed healthy. The base PID setting gives the best tail cost and hard
+violation tradeoff in this sweep. Stronger gains increase `lambda_tilde` but do
+not improve the constraint metrics, while softer gains under-react. Keep
+`Kp=5.0`, `Ki=0.1`, `Kd=0.0` as the production default for the next experiments.
