@@ -526,6 +526,9 @@ def _sgd_step(
         "sat_correction_actor": a_aux["sat_correction_mean"],
         "log_std_mean_actor": a_aux["log_std_mean"],
         "f_term_actor": a_aux["f_term_mean"],
+        "qc_actor": a_aux["qc_actor_mean"],
+        "lambda_qc_actor": a_aux["constraint_term_mean"],
+        "nu_c": jnp.asarray(config.nu_c, dtype=jnp.float32),
         "alpha_clip": jnp.minimum(jnp.exp(log_alpha) / config.alpha_max, 1.0),
         "cost": cc_aux["mean_cost"],
         "qc": cc_aux["mean_qc"],
@@ -775,7 +778,9 @@ def format_epoch_metrics(
                 f"limit={_mean_float(metrics, 'cost_limit'):.2e} "
                 f"pid_err={_mean_float(metrics, 'pid_error'):.2e} "
                 f"S={_mean_float(metrics, 'pid_integral'):.2e} "
-                f"λraw={_mean_float(metrics, 'pid_raw_lambda'):.2e}"
+                f"λraw={_mean_float(metrics, 'pid_raw_lambda'):.2e} "
+                f"λQc_a={_mean_float(metrics, 'lambda_qc_actor'):.2e} "
+                f"nu_c={_mean_float(metrics, 'nu_c'):.1e}"
             ),
             (
                 "         "

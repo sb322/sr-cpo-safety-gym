@@ -190,6 +190,9 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "sat_correction_actor": jnp.asarray([1.0]),
         "log_std_mean_actor": jnp.asarray([0.0]),
         "f_term_actor": jnp.asarray([0.5]),
+        "qc_actor": jnp.asarray([0.25]),
+        "lambda_qc_actor": jnp.asarray([0.125]),
+        "nu_c": jnp.asarray([0.01]),
         "alpha_clip": jnp.asarray([1.0]),
     }
 
@@ -202,3 +205,5 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "pid_err=-1.00e-04" in text
     assert "S=-1.00e-03" in text
     assert "λraw=-1.00e-03" in text
+    assert "λQc_a=1.25e-01" in text
+    assert "nu_c=1.0e-02" in text

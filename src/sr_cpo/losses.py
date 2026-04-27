@@ -179,10 +179,11 @@ def actor_loss_fn(
     qc_value = cost_critic.apply(
         cost_critic_params, state, sample.action, goal_arr
     )
+    constraint_term = lambda_tilde * qc_value / nu_c
     loss = jnp.mean(
         alpha * sample.log_prob
         - f_value / nu_f
-        + lambda_tilde * qc_value / nu_c
+        + constraint_term
     )
 
     probes = {
@@ -193,6 +194,8 @@ def actor_loss_fn(
         "sat_correction_mean": jnp.mean(sample.sat_correction),
         "log_std_mean": jnp.mean(sample.log_std),
         "f_term_mean": jnp.mean(f_value) / nu_f,
+        "qc_actor_mean": jnp.mean(qc_value),
+        "constraint_term_mean": jnp.mean(constraint_term),
         "nan_sa": _has_nonfinite(sa_repr),
         "nan_g": _has_nonfinite(g_repr),
         "nan_action": _has_nonfinite(sample.action),

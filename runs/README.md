@@ -198,3 +198,44 @@ Follow-up:
 - `slurm/depth_sgd4_residual.sh` reruns the residual depth sweep with
   `sgd_steps=4` fixed over `num_blocks=4`, `8`, `16`, and `32`. This tests the
   depth-scaling question after fixing the update-budget bottleneck found here.
+
+## 2026-04-27 - Job 1010892 - Constraint Activation Sweep
+
+- Script: `slurm/constraint_activation_sweep.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `2d12a82 feat(slurm): add constraint activation sweep`
+- Result: all five array tasks `COMPLETED 0:0`
+- Seed: `0`
+- Architecture: plain `num_blocks=4`, `use_residual=false`
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_constraint.1010892_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_constraint.1010892_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_constraint.1010892_2.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_constraint.1010892_3.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_constraint.1010892_4.out`
+
+Tail diagnostics:
+
+| Label | Cost limit | Kp | Ki | Lambda tail | PID error tail | Integral tail | Cost tail | Hard violation tail |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `unconstrained` | `1e-4` | `0.0` | `0.0` | `0.0000` | `2.39e-4` | `8.05e-2` | `0.0357` | `0.0377` |
+| `cl1e-4` | `1e-4` | `5.0` | `0.1` | `0.0058` | `2.04e-4` | `4.80e-2` | `0.0301` | `0.0292` |
+| `cl5e-5` | `5e-5` | `5.0` | `0.1` | `0.0113` | `3.25e-4` | `9.63e-2` | `0.0378` | `0.0337` |
+| `cl1e-5` | `1e-5` | `5.0` | `0.1` | `0.0128` | `4.13e-4` | `1.07e-1` | `0.0428` | `0.0340` |
+| `cl0` | `0` | `5.0` | `0.1` | `0.0137` | `3.54e-4` | `1.20e-1` | `0.0361` | `0.0391` |
+
+All settings kept NaN probes and parameter-NaN probes at zero. The diagnostic
+settles the first ambiguity: the PID controller is alive. Tighter budgets make
+`pid_err`, `S`, `lambda_raw`, and `lambda_tilde` positive in the expected
+direction. However, tightening the budget does not produce monotone behavioral
+improvement in rollout cost or hard violations. The likely scale issue is in
+the actor loss: with `nu_c=1`, `lambda_tilde ~= 0.006-0.014` and
+`Q_c ~= 0.03-0.05`, so the actor penalty `lambda_tilde * Q_c / nu_c` is around
+`1e-4` to `7e-4`, far below the contrastive reward term scale.
+
+Follow-up:
+
+- `slurm/constraint_pressure_sweep.sh` fixes `cost_limit=0.0001` and base PID
+  gains, then sweeps `nu_c` over `1.0`, `0.01`, `0.001`, `0.0003`, and
+  `0.0001`. It also logs `lambda_qc_actor` so we can directly see when the
+  Lagrangian actor term becomes large enough to affect policy behavior.
