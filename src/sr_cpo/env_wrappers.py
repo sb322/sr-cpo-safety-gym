@@ -198,12 +198,20 @@ class SafeLearningGoToGoalAdapter:
         zeros = jnp.zeros_like(cost, dtype=jnp.float32)
         truncation = _info_array(state_info, "truncation", zeros).astype(jnp.float32)
         seed = _info_array(state_info, "seed", _info_array(state_info, "rng", zeros))
+        goal_dist = _info_array(state_info, "last_goal_dist", zeros).astype(
+            jnp.float32
+        )
+        goal_reached = _info_array(state_info, "goal_reached", zeros).astype(
+            jnp.float32
+        )
         # GoToGoal does not emit a wall-distance diagnostic; keep a finite placeholder.
         d_wall = _info_array(state_info, "d_wall", zeros).astype(jnp.float32)
         return {
             "state": state_obs,
             "next_state": next_obs,
             "cost": cost,
+            "goal_dist": goal_dist,
+            "goal_reached": goal_reached,
             "d_wall": d_wall,
             "hard_violation": (cost > 0.0).astype(jnp.float32),
             "state_extras": {

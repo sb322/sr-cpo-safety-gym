@@ -153,6 +153,7 @@ def _toy_step(
     cost = jnp.maximum(0.0, 0.20 - dist_to_hazard)
     d_wall = 1.0 - jnp.max(jnp.abs(next_obs[..., :2]), axis=-1)
     goal_error = jnp.linalg.norm(next_obs[..., : config.goal_dim], axis=-1)
+    goal_reached = (goal_error <= 0.05).astype(jnp.float32)
     reward = -goal_error
     discount = jnp.ones_like(reward, dtype=jnp.float32)
     next_state = ToyEnvState(obs=next_obs)
@@ -165,6 +166,8 @@ def _toy_step(
             "state": obs,
             "next_state": next_obs,
             "cost": cost.astype(jnp.float32),
+            "goal_dist": goal_error.astype(jnp.float32),
+            "goal_reached": goal_reached,
             "d_wall": d_wall.astype(jnp.float32),
             "hard_violation": (cost > 0.0).astype(jnp.float32),
         },
@@ -235,6 +238,8 @@ def _collect_toy_trajectory(
         "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
+        "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
+        "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
     }
     next_state = train_state.replace(
         key=key,
@@ -300,6 +305,8 @@ def _collect_real_trajectory(
         "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
+        "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
+        "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
     }
     next_state = train_state.replace(
         key=key,
@@ -594,6 +601,8 @@ def make_training_epoch(
         metrics["hard_viol"] = collect_metrics["hard_viol"]
         metrics["rollout_cost"] = collect_metrics["cost"]
         metrics["rollout_reward"] = collect_metrics["reward"]
+        metrics["goal_dist"] = collect_metrics["goal_dist"]
+        metrics["goal_reached"] = collect_metrics["goal_reached"]
         return state, metrics
 
     @jax.jit
@@ -776,6 +785,8 @@ def format_epoch_metrics(
                 f"hard_viol={_mean_float(metrics, 'hard_viol'):.4f} "
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
                 f"rew={_mean_float(metrics, 'rollout_reward'):.4f} "
+                f"gdist={_mean_float(metrics, 'goal_dist'):.4f} "
+                f"reached={_mean_float(metrics, 'goal_reached'):.4f} "
                 f"λ̃={_mean_float(metrics, 'lambda_tilde'):.4f} "
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
                 f"Qc={_mean_float(metrics, 'qc'):.4f} "

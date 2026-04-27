@@ -53,6 +53,8 @@ class FakeVectorAdapter:
             extras={
                 "next_state": obs,
                 "cost": jnp.zeros((self.num_envs,), dtype=jnp.float32),
+                "goal_dist": jnp.linalg.norm(obs[:, :3], axis=-1),
+                "goal_reached": jnp.zeros((self.num_envs,), dtype=jnp.float32),
             },
         )
         return ToyEnvState(obs=obs), transition
@@ -65,16 +67,19 @@ class FakeVectorAdapter:
         )
         next_obs = 0.99 * state.obs + 0.05 * action_pad
         cost = jnp.maximum(0.0, 0.1 - jnp.linalg.norm(next_obs[:, :2], axis=-1))
+        goal_dist = jnp.linalg.norm(next_obs[:, :3], axis=-1)
         next_state = ToyEnvState(obs=next_obs)
         transition = Transition(
             observation=state.obs,
             action=action,
-            reward=-jnp.linalg.norm(next_obs[:, :3], axis=-1),
+            reward=-goal_dist,
             discount=jnp.ones((self.num_envs,), dtype=jnp.float32),
             extras={
                 "state": state.obs,
                 "next_state": next_obs,
                 "cost": cost,
+                "goal_dist": goal_dist,
+                "goal_reached": (goal_dist <= 0.05).astype(jnp.float32),
                 "d_wall": jnp.ones((self.num_envs,), dtype=jnp.float32),
                 "hard_violation": (cost > 0.0).astype(jnp.float32),
             },
@@ -155,6 +160,8 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "hard_viol": jnp.asarray([0.0]),
         "cost": jnp.asarray([0.0]),
         "rollout_reward": jnp.asarray([-1.2345]),
+        "goal_dist": jnp.asarray([0.42]),
+        "goal_reached": jnp.asarray([0.25]),
         "lambda_tilde": jnp.asarray([0.0]),
         "jc_hat": jnp.asarray([0.0]),
         "qc": jnp.asarray([0.0]),
@@ -203,6 +210,8 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "grad[c=0/" in text
     assert "actor[α=1.0000" in text
     assert "rew=-1.2345" in text
+    assert "gdist=0.4200" in text
+    assert "reached=0.2500" in text
     assert "limit=1.00e-04" in text
     assert "pid_err=-1.00e-04" in text
     assert "S=-1.00e-03" in text

@@ -29,6 +29,7 @@ class FakeGoToGoal(Env):
         obs = jnp.linspace(0.0, 1.0, self.observation_size, dtype=jnp.float32)
         info: dict[str, Any] = {
             "rng": rng,
+            "last_goal_dist": jnp.ones((), dtype=jnp.float32),
             "cost": jnp.zeros((), dtype=jnp.float32),
             "goal_reached": jnp.zeros((), dtype=jnp.float32),
         }
@@ -47,6 +48,8 @@ class FakeGoToGoal(Env):
         cost = jnp.asarray(self.documented_step_cost, dtype=jnp.float32)
         info = dict(state.info)
         info["cost"] = cost
+        info["last_goal_dist"] = jnp.asarray(0.5, dtype=jnp.float32)
+        info["goal_reached"] = jnp.ones((), dtype=jnp.float32)
         return state.replace(
             obs=obs,
             reward=jnp.ones((), dtype=jnp.float32),
@@ -68,6 +71,8 @@ def test_safe_learning_go_to_goal_adapter_reset_uses_info_cost() -> None:
     assert bool(jnp.all(reset_transition.extras["cost"] >= 0.0))
     assert bool(jnp.allclose(reset_transition.extras["cost"], state.info["cost"]))
     assert bool(jnp.allclose(reset_transition.extras["cost"], 0.0))
+    assert bool(jnp.allclose(reset_transition.extras["goal_dist"], 1.0))
+    assert bool(jnp.allclose(reset_transition.extras["goal_reached"], 0.0))
 
 
 def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
@@ -86,6 +91,8 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert transition.discount.shape == (num_envs,)
     assert transition.extras["next_state"].shape == (num_envs, 5)
     assert transition.extras["hard_violation"].shape == (num_envs,)
+    assert transition.extras["goal_dist"].shape == (num_envs,)
+    assert transition.extras["goal_reached"].shape == (num_envs,)
     assert transition.extras["state_extras"]["truncation"].shape == (num_envs,)
     assert bool(jnp.all(jnp.isfinite(next_state.obs)))
     assert bool(jnp.all(jnp.isfinite(transition.extras["cost"])))
@@ -97,6 +104,8 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert bool(jnp.all(discount_is_binary))
     assert bool(jnp.allclose(transition.extras["cost"], next_state.info["cost"]))
     assert bool(jnp.allclose(transition.extras["cost"], fake_env.documented_step_cost))
+    assert bool(jnp.allclose(transition.extras["goal_dist"], 0.5))
+    assert bool(jnp.allclose(transition.extras["goal_reached"], 1.0))
 
 
 def test_safe_learning_loader_bypasses_broad_benchmark_suite_init(
