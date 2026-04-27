@@ -19,6 +19,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/baseline_cl0001_3seed.sh",
         "slurm/pid_gain_sweep.sh",
         "slurm/depth_sweep_residual.sh",
+        "slurm/depth8_sgd_sweep.sh",
     ):
         source = Path(script).read_text()
 
@@ -89,6 +90,22 @@ def test_depth_sweep_script_is_residual_depth_array() -> None:
     assert 'PID_KD="0.0"' in source
 
 
+def test_depth8_sgd_sweep_script_is_residual_update_array() -> None:
+    source = Path("slurm/depth8_sgd_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-2" in source
+    assert "safe_depth8_sgd.%A_%a.out" in source
+    assert 'SGD_LABELS=("sgd1" "sgd2" "sgd4")' in source
+    assert 'SGD_STEPS=("1" "2" "4")' in source
+    assert 'NUM_BLOCKS="8"' in source
+    assert "--use-residual" in source
+    assert '--sgd-steps "$SGD_STEP"' in source
+    assert 'COST_LIMIT="0.0001"' in source
+    assert 'PID_KP="5.0"' in source
+    assert 'PID_KI="0.1"' in source
+    assert 'PID_KD="0.0"' in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
@@ -105,6 +122,7 @@ def test_slurm_static_diff_heredocs_pass_locally() -> None:
         "slurm/baseline_cl0001_3seed.sh",
         "slurm/pid_gain_sweep.sh",
         "slurm/depth_sweep_residual.sh",
+        "slurm/depth8_sgd_sweep.sh",
     ):
         block = _static_check_block(script)
 

@@ -155,3 +155,9 @@ the contrastive critic under the current optimizer/update schedule. The next
 experiment should keep residual depth fixed at 8 and sweep the critic learning
 schedule, for example more SGD steps or a higher critic learning rate, before
 claiming depth helps or hurts the algorithm itself.
+
+Follow-up:
+
+- `slurm/depth8_sgd_sweep.sh` keeps residual `num_blocks=8` fixed and sweeps
+  `sgd_steps=1`, `2`, and `4` to test whether extra optimizer updates rescue
+  the contrastive critic.
