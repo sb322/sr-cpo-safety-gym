@@ -129,6 +129,10 @@ def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
     assert bool(update_norm < config.learning_rate * 2.0)
 
 
+def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
+    assert TrainConfig().cost_limit == 0.0001
+
+
 def test_run_training_prints_required_probe_sections() -> None:
     lines: list[str] = []
     result = run_training(_tiny_config(), print_fn=lines.append)

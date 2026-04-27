@@ -47,3 +47,5 @@ Follow-up:
   sweep over `0.001`, `0.0005`, and `0.0001` using the same real-env settings.
 - `slurm/baseline_cl0001_3seed.sh` promotes the first active dual setting,
   `cost_limit=0.0001`, to a three-seed baseline over seeds `0`, `1`, and `2`.
+- `cost_limit=0.0001` is now the calibrated production default for
+  `TrainConfig`, `slurm/smoke.sh`, and `slurm/full.sh`.

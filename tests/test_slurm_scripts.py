@@ -55,6 +55,14 @@ def test_cl0001_baseline_script_is_three_seed_array() -> None:
     assert '--cost-limit "$COST_LIMIT"' in source
 
 
+def test_production_launchers_use_calibrated_cost_limit() -> None:
+    for script in ("slurm/smoke.sh", "slurm/full.sh"):
+        source = Path(script).read_text()
+
+        assert "--cost-limit 0.0001" in source
+        assert "--cost-limit 0.05" not in source
+
+
 def test_slurm_static_diff_heredocs_pass_locally() -> None:
     for script in (
         "slurm/smoke.sh",

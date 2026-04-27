@@ -77,7 +77,7 @@ class TrainConfig:
     nu_f: float = 1.0
     nu_c: float = 1.0
     alpha_max: float = 1.0
-    cost_limit: float = 0.05
+    cost_limit: float = 0.0001
     pid_kp: float = 5.0
     pid_ki: float = 0.1
     pid_kd: float = 0.0

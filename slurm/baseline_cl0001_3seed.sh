@@ -100,6 +100,8 @@ for marker in [
 # 3. Phase-1g alpha cap
 assert "alpha_max" in src_train, "alpha-cap (Args.alpha_max) missing from train.py"
 assert "log_alpha_cap" in src_train, "alpha-cap clip not present in train.py sgd_step"
+assert "cost_limit: float = 0.0001" in src_train, \
+    "calibrated cost-limit default missing from train.py"
 
 print("Static diff + probe verification PASSED.")
 PYCHECK
