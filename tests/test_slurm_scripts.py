@@ -21,6 +21,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/depth_sweep_residual.sh",
         "slurm/depth8_sgd_sweep.sh",
         "slurm/depth_sgd4_residual.sh",
+        "slurm/constraint_activation_sweep.sh",
     ):
         source = Path(script).read_text()
 
@@ -128,6 +129,32 @@ def test_depth_sgd4_script_is_residual_depth_array() -> None:
     assert 'PID_KD="0.0"' in source
 
 
+def test_constraint_activation_script_is_dual_activation_array() -> None:
+    source = Path("slurm/constraint_activation_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-4" in source
+    assert "safe_constraint.%A_%a.out" in source
+    assert (
+        'CONSTRAINT_LABELS=("unconstrained" "cl1e-4" '
+        '"cl5e-5" "cl1e-5" "cl0")'
+    ) in source
+    assert (
+        'COST_LIMITS=("0.0001" "0.0001" '
+        '"0.00005" "0.00001" "0.0")'
+    ) in source
+    assert 'PID_KPS=("0.0" "5.0" "5.0" "5.0" "5.0")' in source
+    assert 'PID_KIS=("0.0" "0.1" "0.1" "0.1" "0.1")' in source
+    assert 'PID_KD="0.0"' in source
+    assert 'USE_RESIDUAL=false' in source
+    assert "--use-residual" not in source
+    assert "--num-blocks 4" in source
+    assert "--sgd-steps 1" in source
+    assert '--cost-limit "$COST_LIMIT"' in source
+    assert '--pid-kp "$PID_KP"' in source
+    assert '--pid-ki "$PID_KI"' in source
+    assert 'pid_error", "pid_integral", "pid_raw_lambda"' in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
@@ -146,6 +173,7 @@ def test_slurm_static_diff_heredocs_pass_locally() -> None:
         "slurm/depth_sweep_residual.sh",
         "slurm/depth8_sgd_sweep.sh",
         "slurm/depth_sgd4_residual.sh",
+        "slurm/constraint_activation_sweep.sh",
     ):
         block = _static_check_block(script)
 

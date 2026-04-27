@@ -486,6 +486,13 @@ def _sgd_step(
         integral_min=config.pid_integral_min,
         integral_max=config.pid_integral_max,
     )
+    pid_error = jc_hat - jnp.asarray(config.cost_limit, dtype=jnp.float32)
+    pid_derivative = pid_error - train_state.pid_state.previous_error
+    pid_raw_lambda = (
+        config.pid_kp * pid_error
+        + config.pid_ki * pid_state.integral
+        + config.pid_kd * pid_derivative
+    )
 
     c_grad_nan = _grads_have_nan(c_grads)
     a_grad_nan = _grads_have_nan(a_grads)
@@ -524,6 +531,10 @@ def _sgd_step(
         "qc": cc_aux["mean_qc"],
         "jc_hat": jc_hat,
         "dual_qc_mean": dual_aux["dual_qc_mean"],
+        "cost_limit": jnp.asarray(config.cost_limit, dtype=jnp.float32),
+        "pid_error": pid_error,
+        "pid_integral": pid_state.integral,
+        "pid_raw_lambda": pid_raw_lambda.astype(jnp.float32),
         "lambda_tilde": pid_state.lambda_tilde,
         "c_grad_nan": c_grad_nan,
         "a_grad_nan": a_grad_nan,
@@ -760,7 +771,11 @@ def format_epoch_metrics(
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
                 f"λ̃={_mean_float(metrics, 'lambda_tilde'):.4f} "
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
-                f"Qc={_mean_float(metrics, 'qc'):.4f}"
+                f"Qc={_mean_float(metrics, 'qc'):.4f} "
+                f"limit={_mean_float(metrics, 'cost_limit'):.2e} "
+                f"pid_err={_mean_float(metrics, 'pid_error'):.2e} "
+                f"S={_mean_float(metrics, 'pid_integral'):.2e} "
+                f"λraw={_mean_float(metrics, 'pid_raw_lambda'):.2e}"
             ),
             (
                 "         "

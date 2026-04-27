@@ -157,6 +157,10 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "lambda_tilde": jnp.asarray([0.0]),
         "jc_hat": jnp.asarray([0.0]),
         "qc": jnp.asarray([0.0]),
+        "cost_limit": jnp.asarray([0.0001]),
+        "pid_error": jnp.asarray([-0.0001]),
+        "pid_integral": jnp.asarray([-0.001]),
+        "pid_raw_lambda": jnp.asarray([-0.001]),
         "nan_obs_critic": jnp.asarray([0.0]),
         "nan_sa_critic": jnp.asarray([0.0]),
         "nan_g_critic": jnp.asarray([0.0]),
@@ -194,3 +198,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "nan[obs_c=0" in text
     assert "grad[c=0/" in text
     assert "actor[α=1.0000" in text
+    assert "limit=1.00e-04" in text
+    assert "pid_err=-1.00e-04" in text
+    assert "S=-1.00e-03" in text
+    assert "λraw=-1.00e-03" in text
