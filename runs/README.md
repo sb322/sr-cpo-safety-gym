@@ -161,3 +161,40 @@ Follow-up:
 - `slurm/depth8_sgd_sweep.sh` keeps residual `num_blocks=8` fixed and sweeps
   `sgd_steps=1`, `2`, and `4` to test whether extra optimizer updates rescue
   the contrastive critic.
+
+## 2026-04-27 - Job 1010750 - Depth8 SGD-Step Sweep
+
+- Script: `slurm/depth8_sgd_sweep.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `0acaf0b feat(slurm): add depth8 sgd sweep`
+- Result: all three array tasks `COMPLETED 0:0`
+- Seed: `0`
+- Cost limit: `0.0001`
+- PID gains: `Kp=5.0`, `Ki=0.1`, `Kd=0.0`
+- Residual towers: enabled
+- Depth: `num_blocks=8`
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth8_sgd.1010750_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth8_sgd.1010750_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth8_sgd.1010750_2.out`
+
+Tail diagnostics:
+
+| SGD steps | Critic loss | Critic acc | Actor loss | Lambda tail | J_c tail | Cost tail | Hard violation tail | Tail epoch time |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | `6.3148` | `0.003` | `4.6529` | `0.0000` | `0.0000` | `0.0004` | `0.0006` | `6.0s` |
+| 2 | `4.9419` | `0.067` | `2.3297` | `0.0000` | `0.0001` | `0.0081` | `0.0043` | `6.2s` |
+| 4 | `4.4886` | `0.210` | `1.4424` | `0.0000` | `0.0000` | `0.0029` | `0.0091` | `6.2s` |
+
+All three settings kept NaN probes and parameter-NaN probes at zero. Increasing
+the update budget rescued depth8 residual critic learning: `sgd_steps=4`
+improved the contrastive critic from near-random accuracy to roughly the same
+range as the plain 4-block baseline, without destabilizing the actor or cost
+critic. The inactive dual in the `sgd4` run is expected because the rollout is
+already safe and the critic-based `J_c` estimate is at or below budget.
+
+Follow-up:
+
+- `slurm/depth_sgd4_residual.sh` reruns the residual depth sweep with
+  `sgd_steps=4` fixed over `num_blocks=4`, `8`, `16`, and `32`. This tests the
+  depth-scaling question after fixing the update-budget bottleneck found here.
