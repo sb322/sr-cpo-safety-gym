@@ -279,3 +279,52 @@ Follow-up:
   unconstrained PID gains `(0, 0, 0)` versus constrained base PID gains
   `(5.0, 0.1, 0.0)`, both at `cost_limit=0.0001` and `nu_c=0.0003`. This is
   the first clean CMDP effect-size experiment.
+
+## 2026-04-27 - Jobs 1011029 and 1011073 - Paired CMDP Effect
+
+- Script: `slurm/constraint_effect_3seed.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `e4bf804 feat(slurm): add constraint effect 3seed`
+- Result: five tasks from `1011029` completed; `1011029_0` was cancelled near
+  the end and replaced by completed rerun `1011073_0`
+- Architecture: plain `num_blocks=4`, `use_residual=false`
+- Cost limit: `0.0001`
+- Constraint pressure: `nu_c=0.0003`
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_effect.1011073_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_effect.1011029_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_effect.1011029_2.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_effect.1011029_3.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_effect.1011029_4.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_effect.1011029_5.out`
+
+Tail diagnostics:
+
+| Seed | Mode | Lambda tail | lambda_Qc actor | Cost tail | Hard violation tail |
+|---:|---|---:|---:|---:|---:|
+| 0 | unconstrained | `0.0000` | `0.00e+0` | `0.0310` | `0.0272` |
+| 0 | constrained | `0.0057` | `3.03e-1` | `0.0159` | `0.0151` |
+| 1 | unconstrained | `0.0000` | `0.00e+0` | `0.0146` | `0.0186` |
+| 1 | constrained | `0.0105` | `3.60e-1` | `0.0107` | `0.0164` |
+| 2 | unconstrained | `0.0000` | `0.00e+0` | `0.0059` | `0.0040` |
+| 2 | constrained | `0.0000` | `0.00e+0` | `0.0038` | `0.0026` |
+
+Mean tail metrics:
+
+| Metric | Unconstrained | Constrained | Relative change |
+|---|---:|---:|---:|
+| rollout cost | `0.0172` | `0.0101` | `-41%` |
+| hard violations | `0.0166` | `0.0114` | `-31%` |
+
+The constrained setting improves safety across all three paired seeds. Seeds 0
+and 1 activate the PID and actor Lagrangian term (`lambda_Qc_actor` around
+`0.3-0.36`) and reduce both rollout cost and hard violations. Seed 2 is already
+below budget, so the PID remains inactive; it still ends with slightly lower
+cost and hard violations. This is the first clean CMDP effect-size result:
+constraints are behaviorally meaningful after calibrating `nu_c`.
+
+Follow-up:
+
+- `slurm/depth_sgd4_cmdp.sh` returns to residual depth scaling using the
+  calibrated CMDP setting: `cost_limit=0.0001`, `nu_c=0.0003`, base PID gains,
+  `sgd_steps=4`, and residual depths `4`, `8`, `16`, and `32`.

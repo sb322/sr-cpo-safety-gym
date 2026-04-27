@@ -24,6 +24,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/constraint_activation_sweep.sh",
         "slurm/constraint_pressure_sweep.sh",
         "slurm/constraint_effect_3seed.sh",
+        "slurm/depth_sgd4_cmdp.sh",
     ):
         source = Path(script).read_text()
 
@@ -203,6 +204,29 @@ def test_constraint_effect_script_pairs_unconstrained_and_constrained_seeds() ->
     assert '--pid-ki "$PID_KI"' in source
 
 
+def test_depth_sgd4_cmdp_script_uses_calibrated_constraint_pressure() -> None:
+    source = Path("slurm/depth_sgd4_cmdp.sh").read_text()
+
+    assert "#SBATCH --array=0-3" in source
+    assert "safe_depth_cmdp.%A_%a.out" in source
+    assert (
+        'DEPTH_LABELS=("depth4_cmdp" "depth8_cmdp" '
+        '"depth16_cmdp" "depth32_cmdp")'
+    ) in source
+    assert 'NUM_BLOCKS=("4" "8" "16" "32")' in source
+    assert 'SGD_STEPS="4"' in source
+    assert 'NU_C="0.0003"' in source
+    assert 'COST_LIMIT="0.0001"' in source
+    assert 'PID_KP="5.0"' in source
+    assert 'PID_KI="0.1"' in source
+    assert 'PID_KD="0.0"' in source
+    assert "--use-residual" in source
+    assert '--num-blocks "$NUM_BLOCK"' in source
+    assert '--sgd-steps "$SGD_STEPS"' in source
+    assert '--nu-c "$NU_C"' in source
+    assert "lambda_qc_actor" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
@@ -224,6 +248,7 @@ def test_slurm_static_diff_heredocs_pass_locally() -> None:
         "slurm/constraint_activation_sweep.sh",
         "slurm/constraint_pressure_sweep.sh",
         "slurm/constraint_effect_3seed.sh",
+        "slurm/depth_sgd4_cmdp.sh",
     ):
         block = _static_check_block(script)
 
