@@ -232,6 +232,7 @@ def _collect_toy_trajectory(
         hard_violations=transitions.extras["hard_violation"],
     )
     metrics = {
+        "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
     }
@@ -296,6 +297,7 @@ def _collect_real_trajectory(
         hard_violations=transitions.extras["hard_violation"],
     )
     metrics = {
+        "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
     }
@@ -591,6 +593,7 @@ def make_training_epoch(
         metrics = _mean_metrics(sgd_metrics)
         metrics["hard_viol"] = collect_metrics["hard_viol"]
         metrics["rollout_cost"] = collect_metrics["cost"]
+        metrics["rollout_reward"] = collect_metrics["reward"]
         return state, metrics
 
     @jax.jit
@@ -772,6 +775,7 @@ def format_epoch_metrics(
                 "         "
                 f"hard_viol={_mean_float(metrics, 'hard_viol'):.4f} "
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
+                f"rew={_mean_float(metrics, 'rollout_reward'):.4f} "
                 f"λ̃={_mean_float(metrics, 'lambda_tilde'):.4f} "
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
                 f"Qc={_mean_float(metrics, 'qc'):.4f} "
