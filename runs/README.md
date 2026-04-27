@@ -239,3 +239,43 @@ Follow-up:
   gains, then sweeps `nu_c` over `1.0`, `0.01`, `0.001`, `0.0003`, and
   `0.0001`. It also logs `lambda_qc_actor` so we can directly see when the
   Lagrangian actor term becomes large enough to affect policy behavior.
+
+## 2026-04-27 - Job 1010958 - Constraint Pressure Sweep
+
+- Script: `slurm/constraint_pressure_sweep.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `d8f8f9d feat(slurm): add constraint pressure sweep`
+- Result: all five array tasks `COMPLETED 0:0`
+- Seed: `0`
+- Cost limit: `0.0001`
+- PID gains: `Kp=5.0`, `Ki=0.1`, `Kd=0.0`
+- Architecture: plain `num_blocks=4`, `use_residual=false`
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pressure.1010958_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pressure.1010958_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pressure.1010958_2.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pressure.1010958_3.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_pressure.1010958_4.out`
+
+Tail diagnostics:
+
+| Label | nu_c | lambda_Qc actor | Lambda tail | Cost tail | Hard violation tail | Actor loss |
+|---|---:|---:|---:|---:|---:|---:|
+| `nuc1` | `1.0` | `2.75e-4` | `0.0082` | `0.0325` | `0.0311` | `1.7492` |
+| `nuc1e-2` | `0.01` | `4.09e-2` | `0.0101` | `0.0389` | `0.0280` | `1.7852` |
+| `nuc1e-3` | `0.001` | `1.82e-1` | `0.0080` | `0.0215` | `0.0203` | `1.9042` |
+| `nuc3e-4` | `0.0003` | `1.94e-1` | `0.0047` | `0.0116` | `0.0123` | `2.4952` |
+| `nuc1e-4` | `0.0001` | `1.12e+0` | `0.0053` | `0.0223` | `0.0267` | `3.2589` |
+
+All settings kept NaN probes and parameter-NaN probes at zero. The experiment
+confirms the actor-loss preconditioning diagnosis: `nu_c=1.0` makes the
+constraint term too small to matter, while `nu_c=0.001` and `nu_c=0.0003`
+reduce rollout cost and hard violations. `nu_c=0.0001` is too strong for this
+setup: the actor loss rises sharply and safety is worse than at `0.0003`.
+
+Follow-up:
+
+- `slurm/constraint_effect_3seed.sh` runs a paired three-seed comparison:
+  unconstrained PID gains `(0, 0, 0)` versus constrained base PID gains
+  `(5.0, 0.1, 0.0)`, both at `cost_limit=0.0001` and `nu_c=0.0003`. This is
+  the first clean CMDP effect-size experiment.
