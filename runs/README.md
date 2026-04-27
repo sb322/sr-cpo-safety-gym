@@ -111,3 +111,9 @@ norms stayed healthy. The base PID setting gives the best tail cost and hard
 violation tradeoff in this sweep. Stronger gains increase `lambda_tilde` but do
 not improve the constraint metrics, while softer gains under-react. Keep
 `Kp=5.0`, `Ki=0.1`, `Kd=0.0` as the production default for the next experiments.
+
+Follow-up:
+
+- `slurm/depth_sweep_residual.sh` runs seed `0` with calibrated safety settings
+  and residual towers over `num_blocks=4`, `8`, and `16` to start the
+  depth-scaling experiment.
