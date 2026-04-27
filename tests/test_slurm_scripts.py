@@ -25,6 +25,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/constraint_pressure_sweep.sh",
         "slurm/constraint_effect_3seed.sh",
         "slurm/depth_sgd4_cmdp.sh",
+        "slurm/goal_conditioning_sweep.sh",
     ):
         source = Path(script).read_text()
 
@@ -37,7 +38,11 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         assert "ENV PREFLIGHT" in source
         assert "--use-real-env" in source
         assert "--observation-dim 55" in source
-        assert "--goal-dim 55" in source
+        if script == "slurm/goal_conditioning_sweep.sh":
+            assert '--goal-start "$GOAL_START"' in source
+            assert '--goal-dim "$GOAL_DIM"' in source
+        else:
+            assert "--goal-dim 55" in source
         assert "--grad-clip-norm 10.0" in source
         assert "set +o pipefail\nnvidia-smi 2>&1 | head -20\nset -o pipefail" in source
 
@@ -227,6 +232,28 @@ def test_depth_sgd4_cmdp_script_uses_calibrated_constraint_pressure() -> None:
     assert "lambda_qc_actor" in source
 
 
+def test_goal_conditioning_sweep_compares_full_obs_and_goal_lidar() -> None:
+    source = Path("slurm/goal_conditioning_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-3" in source
+    assert "safe_goal.%A_%a.out" in source
+    assert 'GOAL_LABELS=("full_d8" "lidar_d8" "full_d16" "lidar_d16")' in source
+    assert 'NUM_BLOCKS=("8" "8" "16" "16")' in source
+    assert 'GOAL_STARTS=("0" "16" "0" "16")' in source
+    assert 'GOAL_DIMS=("55" "16" "55" "16")' in source
+    assert 'NU_C="0.0003"' in source
+    assert 'COST_LIMIT="0.0001"' in source
+    assert 'PID_KP="5.0"' in source
+    assert 'PID_KI="0.1"' in source
+    assert 'PID_KD="0.0"' in source
+    assert "--use-residual" in source
+    assert '--goal-start "$GOAL_START"' in source
+    assert '--goal-dim "$GOAL_DIM"' in source
+    assert "goal_start=config.goal_start" in source
+    assert "goal_dist" in source
+    assert "goal_reached" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
@@ -249,6 +276,7 @@ def test_slurm_static_diff_heredocs_pass_locally() -> None:
         "slurm/constraint_pressure_sweep.sh",
         "slurm/constraint_effect_3seed.sh",
         "slurm/depth_sgd4_cmdp.sh",
+        "slurm/goal_conditioning_sweep.sh",
     ):
         block = _static_check_block(script)
 

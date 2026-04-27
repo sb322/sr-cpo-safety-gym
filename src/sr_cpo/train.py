@@ -63,6 +63,7 @@ class TrainConfig:
     buffer_capacity: int = 64
     observation_dim: int = 6
     action_dim: int = 2
+    goal_start: int = 0
     goal_dim: int = 3
     width: int = 64
     num_blocks: int = 2
@@ -128,8 +129,8 @@ class TrainState:
     pid_state: PIDState
 
 
-def _goal_from_obs(obs: Array, goal_dim: int) -> Array:
-    return jnp.asarray(obs[..., :goal_dim], dtype=jnp.float32)
+def _goal_from_obs(obs: Array, goal_start: int, goal_dim: int) -> Array:
+    return jnp.asarray(obs[..., goal_start : goal_start + goal_dim], dtype=jnp.float32)
 
 
 def _pad_action(action: Array, observation_dim: int) -> Array:
@@ -152,7 +153,9 @@ def _toy_step(
     dist_to_hazard = jnp.linalg.norm(next_obs[..., :2] - hazard_xy, axis=-1)
     cost = jnp.maximum(0.0, 0.20 - dist_to_hazard)
     d_wall = 1.0 - jnp.max(jnp.abs(next_obs[..., :2]), axis=-1)
-    goal_error = jnp.linalg.norm(next_obs[..., : config.goal_dim], axis=-1)
+    goal_error = jnp.linalg.norm(
+        _goal_from_obs(next_obs, config.goal_start, config.goal_dim), axis=-1
+    )
     goal_reached = (goal_error <= 0.05).astype(jnp.float32)
     reward = -goal_error
     discount = jnp.ones_like(reward, dtype=jnp.float32)
@@ -266,7 +269,7 @@ def _collect_real_trajectory(
     ) -> tuple[tuple[Array, Any], Transition]:
         step_key, env_state = carry
         step_key, actor_key = jax.random.split(step_key)
-        goal = _goal_from_obs(env_state.obs, config.goal_dim)
+        goal = _goal_from_obs(env_state.obs, config.goal_start, config.goal_dim)
         sample = sample_tanh_gaussian(
             objects.actor,
             train_state.actor_params,
@@ -380,8 +383,8 @@ def _sgd_step(
         train_state.replay,
         sample_key,
         batch_size=config.batch_size,
-        goal_start=0,
-        goal_end=config.goal_dim,
+        goal_start=config.goal_start,
+        goal_end=config.goal_start + config.goal_dim,
     )
 
     def critic_objective(params: Any) -> tuple[Array, dict[str, Array]]:
@@ -647,6 +650,14 @@ def initialize_training(
                 (config.num_envs, runtime_observation_dim),
                 dtype=jnp.float32,
             )
+        )
+    if config.goal_start < 0:
+        raise ValueError("goal_start must be non-negative")
+    if config.goal_dim <= 0:
+        raise ValueError("goal_dim must be positive")
+    if config.goal_start + config.goal_dim > runtime_observation_dim:
+        raise ValueError(
+            "goal_start + goal_dim must fit inside the runtime observation dimension"
         )
 
     actor = Actor(

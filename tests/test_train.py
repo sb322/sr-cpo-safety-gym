@@ -119,6 +119,30 @@ def test_training_epoch_can_collect_from_real_env_adapter_path() -> None:
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
 
+def test_training_epoch_accepts_configured_goal_slice() -> None:
+    config = replace(_tiny_config(), goal_start=1, goal_dim=2)
+    state, objects = initialize_training(config)
+    state = prefill_buffer(state, objects, config)
+    training_epoch = make_training_epoch(objects, config)
+
+    _, metrics = training_epoch(state)
+
+    assert metrics["goal_dist"].shape == (config.steps_per_epoch,)
+    for leaf in jax.tree_util.tree_leaves(metrics):
+        assert bool(jnp.all(jnp.isfinite(leaf)))
+
+
+def test_initialize_training_rejects_invalid_goal_slice() -> None:
+    config = replace(_tiny_config(), goal_start=5, goal_dim=2)
+
+    try:
+        initialize_training(config)
+    except ValueError as exc:
+        assert "goal_start + goal_dim" in str(exc)
+    else:
+        raise AssertionError("invalid goal slice should fail before training starts")
+
+
 def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
     config = _tiny_config()
     _, objects = initialize_training(config)
