@@ -78,3 +78,9 @@ or near the boundary, while seed 2 stays inactive because both rollout cost and
 estimated cost are already low. This validates `0.0001` as the first production
 constraint setting. The next experiment should sweep PID gains at this fixed
 budget, because the remaining variation is controller response, not plumbing.
+
+Follow-up:
+
+- `slurm/pid_gain_sweep.sh` runs seed `0` at fixed `cost_limit=0.0001` over
+  `(Kp, Ki, Kd)` settings `(2.5, 0.05, 0.0)`, `(5.0, 0.1, 0.0)`, and
+  `(10.0, 0.2, 0.0)` to compare controller response.
