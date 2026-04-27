@@ -328,3 +328,40 @@ Follow-up:
 - `slurm/depth_sgd4_cmdp.sh` returns to residual depth scaling using the
   calibrated CMDP setting: `cost_limit=0.0001`, `nu_c=0.0003`, base PID gains,
   `sgd_steps=4`, and residual depths `4`, `8`, `16`, and `32`.
+
+## 2026-04-27 - Job 1011129 - Calibrated CMDP Residual Depth Sweep
+
+- Script: `slurm/depth_sgd4_cmdp.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `3f4ba5d feat(slurm): add calibrated cmdp depth sweep`
+- Result: all four array tasks `COMPLETED 0:0`
+- Seed: `0`
+- Cost limit: `0.0001`
+- Constraint pressure: `nu_c=0.0003`
+- PID gains: `Kp=5.0`, `Ki=0.1`, `Kd=0.0`
+- SGD steps: `4`
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth_cmdp.1011129_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth_cmdp.1011129_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth_cmdp.1011129_2.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth_cmdp.1011129_3.out`
+
+Tail diagnostics:
+
+| Depth | Residual | Critic loss | Accuracy | Actor loss | Lambda tail | lambda_Qc actor | Cost tail | Hard violation tail |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| 4 | true | `4.7050` | `0.215` | `2.0815` | `0.0117` | `2.91e-1` | `0.0078` | `0.0061` |
+| 8 | true | `4.2343` | `0.328` | `0.8918` | `0.0000` | `0.00e+0` | `0.0088` | `0.0149` |
+| 16 | true | `4.4984` | `0.178` | `1.4649` | `0.0000` | `0.00e+0` | `0.0034` | `0.0061` |
+| 32 | true | `4.2803` | `0.141` | `5.3786` | `0.0000` | `0.00e+0` | `0.0003` | `0.0000` |
+
+All depths kept NaN probes and parameter-NaN probes at zero. The calibrated CMDP
+setting is stable through 32 residual blocks. Depth 8 has the best contrastive
+accuracy, depth 16 is safer with moderate actor loss, and depth 32 is extremely
+safe but may be conservative rather than task-effective.
+
+Follow-up:
+
+- Add a rollout reward probe to the grep-compatible per-epoch log before the
+  next depth run. The depth sweep currently tells us which models are safe; the
+  reward probe will tell us whether they are also solving the task.
