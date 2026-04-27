@@ -117,3 +117,41 @@ Follow-up:
 - `slurm/depth_sweep_residual.sh` runs seed `0` with calibrated safety settings
   and residual towers over `num_blocks=4`, `8`, and `16` to start the
   depth-scaling experiment.
+
+## 2026-04-27 - Job 1010681 - Residual Depth Sweep
+
+- Script: `slurm/depth_sweep_residual.sh`
+- Environment: Wulver A100, JAX GPU backend, safe-learning GoToGoal adapter
+- Repo state: includes `79a452f feat(slurm): add residual depth sweep`
+- Result: all three array tasks `COMPLETED 0:0`
+- Seed: `0`
+- Cost limit: `0.0001`
+- PID gains: `Kp=5.0`, `Ki=0.1`, `Kd=0.0`
+- Residual towers: enabled
+- Output files on Wulver:
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth.1010681_0.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth.1010681_1.out`
+  - `/mmfs1/home/sb3222/projects/sr-cpo-safety-gym/safe_depth.1010681_2.out`
+
+Tail diagnostics:
+
+| Depth | Critic loss | Critic acc | Actor loss | Lambda tail | J_c tail | Cost tail | Hard violation tail | Tail epoch time |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | `5.5292` | `0.025` | `3.2937` | `0.0000` | `0.0001` | `0.0053` | `0.0031` | `6.3s` |
+| 8 | `6.9267` | `0.001` | `5.5964` | `0.0000` | `0.0000` | `0.0004` | `0.0000` | `5.9s` |
+| 16 | `5.9003` | `0.006` | `4.2674` | `0.0000` | `0.0001` | `0.0047` | `0.0036` | `6.3s` |
+
+All depths kept NaN probes and parameter-NaN probes at zero. Wallclock did not
+meaningfully increase up to 16 residual blocks at this run size. Safety metrics
+were very low for all residual depths, so the PID stayed inactive. However, the
+contrastive reward critic underperformed badly relative to the plain 4-block
+baseline: residual depth 8 was near random InfoNCE performance (`loss ~= log
+1024`, `accuracy ~= 0.001`), and residual depth 16 only partially recovered.
+
+Interpretation:
+
+The residual path is numerically stable and cheap enough, but it is not learning
+the contrastive critic under the current optimizer/update schedule. The next
+experiment should keep residual depth fixed at 8 and sweep the critic learning
+schedule, for example more SGD steps or a higher critic learning rate, before
+claiming depth helps or hurts the algorithm itself.
