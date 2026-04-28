@@ -27,6 +27,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/depth_sgd4_cmdp.sh",
         "slurm/goal_conditioning_sweep.sh",
         "slurm/goal_mask_sweep.sh",
+        "slurm/xy_goal_sweep.sh",
     ):
         source = Path(script).read_text()
 
@@ -39,7 +40,11 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         assert "ENV PREFLIGHT" in source
         assert "--use-real-env" in source
         assert "--observation-dim 55" in source
-        if script in ("slurm/goal_conditioning_sweep.sh", "slurm/goal_mask_sweep.sh"):
+        if script in (
+            "slurm/goal_conditioning_sweep.sh",
+            "slurm/goal_mask_sweep.sh",
+            "slurm/xy_goal_sweep.sh",
+        ):
             assert '--goal-start "$GOAL_START"' in source
             assert '--goal-dim "$GOAL_DIM"' in source
         else:
@@ -284,6 +289,27 @@ def test_goal_mask_sweep_compares_lidar_state_masking() -> None:
     assert "_mask_transition_state_inputs(batch, config)" in source
 
 
+def test_xy_goal_sweep_compares_obs_slice_and_reference_xy_goals() -> None:
+    source = Path("slurm/xy_goal_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-1" in source
+    assert "safe_xy_goal.%A_%a.out" in source
+    assert 'XY_LABELS=("obs_full_d8" "xy_d8")' in source
+    assert 'GOAL_MODES=("obs_slice" "xy")' in source
+    assert 'GOAL_STARTS=("0" "55")' in source
+    assert 'GOAL_DIMS=("55" "2")' in source
+    assert 'NU_C="0.0003"' in source
+    assert 'COST_LIMIT="0.0001"' in source
+    assert "--use-residual" in source
+    assert '--goal-mode "$GOAL_MODE"' in source
+    assert '--goal-start "$GOAL_START"' in source
+    assert '--goal-dim "$GOAL_DIM"' in source
+    assert "desired_goal" in source
+    assert "achieved_goal" in source
+    assert "goal_mode_xy" in source
+    assert "gxy=" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
@@ -308,6 +334,7 @@ def test_slurm_static_diff_heredocs_pass_locally() -> None:
         "slurm/depth_sgd4_cmdp.sh",
         "slurm/goal_conditioning_sweep.sh",
         "slurm/goal_mask_sweep.sh",
+        "slurm/xy_goal_sweep.sh",
     ):
         block = _static_check_block(script)
 

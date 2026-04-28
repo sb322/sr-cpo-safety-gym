@@ -16,6 +16,11 @@ import jax.numpy as jnp
 from brax.envs.wrappers import training
 from flax import struct
 
+_GOAL_LIDAR_START = 16
+_GOAL_LIDAR_END = 32
+_OBS_SLICE_GOAL_MODE = "obs_slice"
+_XY_GOAL_MODE = "xy"
+
 
 @struct.dataclass
 class Transition:
@@ -126,17 +131,25 @@ class SafeLearningGoToGoalAdapter:
         num_envs: int,
         episode_length: int = 1000,
         action_repeat: int = 1,
+        goal_mode: str = _OBS_SLICE_GOAL_MODE,
         **env_kwargs: Any,
     ) -> None:
+        if goal_mode not in {_OBS_SLICE_GOAL_MODE, _XY_GOAL_MODE}:
+            raise ValueError(
+                "goal_mode must be 'obs_slice' or 'xy', "
+                f"got {goal_mode!r}"
+            )
         base_env = (
             env if env is not None else _load_safe_learning_go_to_goal(**env_kwargs)
         )
         episodic_env = training.EpisodeWrapper(
             base_env, episode_length=episode_length, action_repeat=action_repeat
         )
+        self.base_env = base_env
         self.env = training.VmapWrapper(episodic_env, batch_size=num_envs)
         self.num_envs = num_envs
         self.episode_length = episode_length
+        self.goal_mode = goal_mode
 
     @property
     def action_size(self) -> int:
@@ -144,7 +157,40 @@ class SafeLearningGoToGoalAdapter:
 
     @property
     def observation_size(self) -> Any:
-        return self.env.observation_size
+        raw_size = self.env.observation_size
+        if self.goal_mode != _XY_GOAL_MODE:
+            return raw_size
+        return int(raw_size) + 2
+
+    def achieved_goal(self, state: Any) -> jax.Array:
+        """Returns the robot XY achieved goal for reference-style hindsight."""
+
+        if self.goal_mode != _XY_GOAL_MODE:
+            raise ValueError("achieved_goal is only available in xy goal mode")
+        return jnp.asarray(
+            state.data.xpos[..., self.base_env._robot_body_id, :2],
+            dtype=jnp.float32,
+        )
+
+    def desired_goal(self, state: Any) -> jax.Array:
+        """Returns the target XY desired goal for actor rollouts."""
+
+        if self.goal_mode != _XY_GOAL_MODE:
+            raise ValueError("desired_goal is only available in xy goal mode")
+        return jnp.asarray(
+            state.data.mocap_pos[..., self.base_env._goal_mocap_id, :2],
+            dtype=jnp.float32,
+        )
+
+    def _state_observation(self, state: Any) -> jax.Array:
+        obs = jnp.asarray(state.obs, dtype=jnp.float32)
+        if self.goal_mode != _XY_GOAL_MODE:
+            return obs
+        # In xy mode the external goal is passed separately. Keep obstacle and
+        # robot sensors, remove target-lidar leakage, and append robot XY so the
+        # actor/critic can interpret absolute desired/achieved XY goals.
+        obs = obs.at[..., _GOAL_LIDAR_START:_GOAL_LIDAR_END].set(0.0)
+        return jnp.concatenate([obs, self.achieved_goal(state)], axis=-1)
 
     def reset(self, rng: jax.Array | int) -> tuple[Any, Transition]:
         key = jax.random.PRNGKey(rng) if isinstance(rng, int) else rng
@@ -158,7 +204,7 @@ class SafeLearningGoToGoalAdapter:
         return next_state, transition
 
     def _transition_from_reset(self, state: Any) -> Transition:
-        obs = jnp.asarray(state.obs, dtype=jnp.float32)
+        obs = self._state_observation(state)
         action = jnp.zeros((*obs.shape[:-1], self.action_size), dtype=jnp.float32)
         reward = jnp.asarray(state.reward, dtype=jnp.float32)
         discount = jnp.ones_like(reward, dtype=jnp.float32)
@@ -168,14 +214,23 @@ class SafeLearningGoToGoalAdapter:
             state_obs=obs,
             next_obs=obs,
             cost=cost,
+            desired_goal=(
+                self.desired_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+            ),
+            achieved_goal=(
+                self.achieved_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+            ),
+            next_achieved_goal=(
+                self.achieved_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+            ),
         )
         return Transition(obs, action, reward, discount, extras)
 
     def _transition_from_step(
         self, state: Any, action: jax.Array, next_state: Any
     ) -> Transition:
-        obs = jnp.asarray(state.obs, dtype=jnp.float32)
-        next_obs = jnp.asarray(next_state.obs, dtype=jnp.float32)
+        obs = self._state_observation(state)
+        next_obs = self._state_observation(next_state)
         reward = jnp.asarray(next_state.reward, dtype=jnp.float32)
         discount = 1.0 - jnp.asarray(next_state.done, dtype=jnp.float32)
         cost = _cost_from_info(next_state.info)
@@ -184,6 +239,17 @@ class SafeLearningGoToGoalAdapter:
             state_obs=obs,
             next_obs=next_obs,
             cost=cost,
+            desired_goal=(
+                self.desired_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+            ),
+            achieved_goal=(
+                self.achieved_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+            ),
+            next_achieved_goal=(
+                self.achieved_goal(next_state)
+                if self.goal_mode == _XY_GOAL_MODE
+                else None
+            ),
         )
         return Transition(obs, action, reward, discount, extras)
 
@@ -194,6 +260,9 @@ class SafeLearningGoToGoalAdapter:
         state_obs: jax.Array,
         next_obs: jax.Array,
         cost: jax.Array,
+        desired_goal: jax.Array | None = None,
+        achieved_goal: jax.Array | None = None,
+        next_achieved_goal: jax.Array | None = None,
     ) -> dict[str, Any]:
         zeros = jnp.zeros_like(cost, dtype=jnp.float32)
         truncation = _info_array(state_info, "truncation", zeros).astype(jnp.float32)
@@ -206,7 +275,7 @@ class SafeLearningGoToGoalAdapter:
         )
         # GoToGoal does not emit a wall-distance diagnostic; keep a finite placeholder.
         d_wall = _info_array(state_info, "d_wall", zeros).astype(jnp.float32)
-        return {
+        extras = {
             "state": state_obs,
             "next_state": next_obs,
             "cost": cost,
@@ -219,15 +288,27 @@ class SafeLearningGoToGoalAdapter:
                 "truncation": truncation,
             },
         }
+        if desired_goal is not None:
+            extras["desired_goal"] = desired_goal
+        if achieved_goal is not None:
+            extras["achieved_goal"] = achieved_goal
+        if next_achieved_goal is not None:
+            extras["next_achieved_goal"] = next_achieved_goal
+        return extras
 
 
 def make_safe_learning_go_to_goal(
-    *, num_envs: int, episode_length: int = 1000, **env_kwargs: Any
+    *,
+    num_envs: int,
+    episode_length: int = 1000,
+    goal_mode: str = _OBS_SLICE_GOAL_MODE,
+    **env_kwargs: Any,
 ) -> SafeLearningGoToGoalAdapter:
     """Creates the vectorized safe-learning GoToGoal adapter."""
 
     return SafeLearningGoToGoalAdapter(
         num_envs=num_envs,
         episode_length=episode_length,
+        goal_mode=goal_mode,
         **env_kwargs,
     )

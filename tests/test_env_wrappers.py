@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from typing import Any
 
 import jax
@@ -106,6 +107,30 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert bool(jnp.allclose(transition.extras["cost"], fake_env.documented_step_cost))
     assert bool(jnp.allclose(transition.extras["goal_dist"], 0.5))
     assert bool(jnp.allclose(transition.extras["goal_reached"], 1.0))
+
+
+def test_xy_goal_mode_uses_robot_and_target_xy_goal_space() -> None:
+    adapter = object.__new__(SafeLearningGoToGoalAdapter)
+    adapter.goal_mode = "xy"
+    adapter.base_env = SimpleNamespace(_robot_body_id=1, _goal_mocap_id=0)
+    obs = jnp.arange(2 * 55, dtype=jnp.float32).reshape(2, 55)
+    xpos = jnp.zeros((2, 3, 3), dtype=jnp.float32)
+    xpos = xpos.at[:, 1, :2].set(jnp.asarray([[0.25, -0.5], [1.0, 1.5]]))
+    mocap_pos = jnp.zeros((2, 1, 3), dtype=jnp.float32)
+    mocap_pos = mocap_pos.at[:, 0, :2].set(jnp.asarray([[1.0, 2.0], [-2.0, 0.5]]))
+    state = SimpleNamespace(
+        obs=obs,
+        data=SimpleNamespace(xpos=xpos, mocap_pos=mocap_pos),
+    )
+
+    state_obs = adapter._state_observation(state)
+
+    assert state_obs.shape == (2, 57)
+    assert bool(jnp.allclose(state_obs[:, :16], obs[:, :16]))
+    assert bool(jnp.allclose(state_obs[:, 16:32], 0.0))
+    assert bool(jnp.allclose(state_obs[:, 32:55], obs[:, 32:55]))
+    assert bool(jnp.allclose(state_obs[:, 55:57], adapter.achieved_goal(state)))
+    assert bool(jnp.allclose(adapter.desired_goal(state), mocap_pos[:, 0, :2]))
 
 
 def test_safe_learning_loader_bypasses_broad_benchmark_suite_init(

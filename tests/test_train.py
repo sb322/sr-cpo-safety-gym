@@ -42,6 +42,9 @@ class FakeVectorAdapter:
         self.num_envs = num_envs
         self.observation_dim = observation_dim
 
+    def desired_goal(self, state: ToyEnvState) -> jax.Array:
+        return state.obs[:, -2:]
+
     def reset(self, key: jax.Array) -> tuple[ToyEnvState, Transition]:
         obs = jax.random.normal(
             key, (self.num_envs, self.observation_dim), dtype=jnp.float32
@@ -56,6 +59,7 @@ class FakeVectorAdapter:
                 "cost": jnp.zeros((self.num_envs,), dtype=jnp.float32),
                 "goal_dist": jnp.linalg.norm(obs[:, :3], axis=-1),
                 "goal_reached": jnp.zeros((self.num_envs,), dtype=jnp.float32),
+                "desired_goal": self.desired_goal(ToyEnvState(obs=obs)),
             },
         )
         return ToyEnvState(obs=obs), transition
@@ -81,6 +85,7 @@ class FakeVectorAdapter:
                 "cost": cost,
                 "goal_dist": goal_dist,
                 "goal_reached": (goal_dist <= 0.05).astype(jnp.float32),
+                "desired_goal": self.desired_goal(state),
                 "d_wall": jnp.ones((self.num_envs,), dtype=jnp.float32),
                 "hard_violation": (cost > 0.0).astype(jnp.float32),
             },
@@ -116,6 +121,27 @@ def test_training_epoch_can_collect_from_real_env_adapter_path() -> None:
     state, metrics = training_epoch(state)
 
     assert state.replay.actions.shape[-1] == adapter.action_size
+    for leaf in jax.tree_util.tree_leaves(metrics):
+        assert bool(jnp.all(jnp.isfinite(leaf)))
+
+
+def test_training_epoch_can_collect_xy_goals_from_real_env_adapter_path() -> None:
+    config = replace(
+        _tiny_config(),
+        use_real_env=True,
+        goal_mode="xy",
+        goal_start=3,
+        goal_dim=2,
+    )
+    adapter = FakeVectorAdapter(num_envs=config.num_envs, observation_dim=5)
+    state, objects = initialize_training(config, env_adapter=adapter)
+    state = prefill_buffer(state, objects, config)
+    training_epoch = make_training_epoch(objects, config)
+
+    _, metrics = training_epoch(state)
+
+    assert bool(jnp.all(metrics["goal_mode_xy"] == 1.0))
+    assert metrics["goal_slice_mean"].shape == (config.steps_per_epoch,)
     for leaf in jax.tree_util.tree_leaves(metrics):
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
@@ -214,6 +240,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "goal_reached": jnp.asarray([0.25]),
         "goal_start": jnp.asarray([16.0]),
         "goal_dim": jnp.asarray([16.0]),
+        "goal_mode_xy": jnp.asarray([1.0]),
         "goal_slice_mean": jnp.asarray([0.125]),
         "goal_slice_std": jnp.asarray([0.25]),
         "goal_slice_min": jnp.asarray([-0.5]),
@@ -271,6 +298,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "reached=0.2500" in text
     assert "gstart=16" in text
     assert "gdim=16" in text
+    assert "gxy=1" in text
     assert "gmean=0.125" in text
     assert "gstd=0.250" in text
     assert "gmin=-0.500" in text

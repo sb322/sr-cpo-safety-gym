@@ -64,6 +64,7 @@ class TrainConfig:
     buffer_capacity: int = 64
     observation_dim: int = 6
     action_dim: int = 2
+    goal_mode: str = "obs_slice"
     goal_start: int = 0
     goal_dim: int = 3
     mask_goal_in_state: bool = False
@@ -139,6 +140,8 @@ def _pad_action(action: Array, observation_dim: int) -> Array:
 def _mask_goal_in_state(obs: Array, config: TrainConfig) -> Array:
     """Optionally removes the external goal slice from state inputs."""
 
+    if config.goal_mode == "xy":
+        return obs
     if not config.mask_goal_in_state:
         return obs
     return obs.at[..., config.goal_start : config.goal_start + config.goal_dim].set(
@@ -160,6 +163,21 @@ def _mask_transition_state_inputs(
         observation=_mask_goal_in_state(transitions.observation, config),
         extras=extras,
     )
+
+
+def _real_rollout_goal(env_adapter: Any, env_state: Any, config: TrainConfig) -> Array:
+    if config.goal_mode == "xy":
+        goal = env_adapter.desired_goal(env_state)
+    else:
+        goal = _goal_from_obs(env_state.obs, config.goal_start, config.goal_dim)
+    _assert_goal_shape(goal, config.goal_dim, context="real actor rollout")
+    return goal
+
+
+def _real_state_observation(env_adapter: Any, env_state: Any) -> Array:
+    if hasattr(env_adapter, "_state_observation"):
+        return env_adapter._state_observation(env_state)
+    return jnp.asarray(env_state.obs, dtype=jnp.float32)
 
 
 def _toy_step(
@@ -302,12 +320,13 @@ def _collect_real_trajectory(
     ) -> tuple[tuple[Array, Any], Transition]:
         step_key, env_state = carry
         step_key, actor_key = jax.random.split(step_key)
-        goal = _goal_from_obs(env_state.obs, config.goal_start, config.goal_dim)
-        _assert_goal_shape(goal, config.goal_dim, context="real actor rollout")
+        goal = _real_rollout_goal(env_adapter, env_state, config)
         sample = sample_tanh_gaussian(
             objects.actor,
             train_state.actor_params,
-            _mask_goal_in_state(env_state.obs, config),
+            _mask_goal_in_state(
+                _real_state_observation(env_adapter, env_state), config
+            ),
             goal,
             actor_key,
         )
@@ -321,16 +340,20 @@ def _collect_real_trajectory(
     )
     del next_key
 
+    initial_obs = _real_state_observation(env_adapter, train_state.env_state)
     observations = jnp.concatenate(
         [
-            train_state.env_state.obs[None, ...],
+            initial_obs[None, ...],
             transitions.extras["next_state"],
         ],
         axis=0,
     )
-    rollout_goals = _goal_from_obs(
-        observations[:-1], config.goal_start, config.goal_dim
-    )
+    if config.goal_mode == "xy":
+        rollout_goals = transitions.extras["desired_goal"]
+    else:
+        rollout_goals = _goal_from_obs(
+            observations[:-1], config.goal_start, config.goal_dim
+        )
     _assert_goal_shape(
         rollout_goals, config.goal_dim, context="real actor rollout metrics"
     )
@@ -657,6 +680,9 @@ def make_training_epoch(
         metrics["goal_reached"] = collect_metrics["goal_reached"]
         metrics["goal_start"] = jnp.asarray(config.goal_start, dtype=jnp.float32)
         metrics["goal_dim"] = jnp.asarray(config.goal_dim, dtype=jnp.float32)
+        metrics["goal_mode_xy"] = jnp.asarray(
+            config.goal_mode == "xy", dtype=jnp.float32
+        )
         metrics["goal_slice_mean"] = collect_metrics["goal_slice_mean"]
         metrics["goal_slice_std"] = collect_metrics["goal_slice_std"]
         metrics["goal_slice_min"] = collect_metrics["goal_slice_min"]
@@ -677,6 +703,10 @@ def initialize_training(
 ) -> tuple[TrainState, TrainingObjects]:
     """Initializes modules, optimizers, toy env state, and replay buffer."""
 
+    if config.goal_mode not in {"obs_slice", "xy"}:
+        raise ValueError("goal_mode must be 'obs_slice' or 'xy'")
+    if config.goal_mode == "xy" and config.goal_dim != 2:
+        raise ValueError("xy goal mode requires goal_dim=2")
     key = jax.random.PRNGKey(config.seed)
     (
         key,
@@ -693,6 +723,7 @@ def initialize_training(
         env_adapter = env_adapter or make_safe_learning_go_to_goal(
             num_envs=config.num_envs,
             episode_length=config.env_episode_length,
+            goal_mode=config.goal_mode,
         )
         env_state, reset_transition = env_adapter.reset(env_key)
         runtime_observation_dim = int(reset_transition.observation.shape[-1])
@@ -855,6 +886,7 @@ def format_epoch_metrics(
                 f"reached={_mean_float(metrics, 'goal_reached'):.4f} "
                 f"gstart={_mean_float(metrics, 'goal_start'):.0f} "
                 f"gdim={_mean_float(metrics, 'goal_dim'):.0f} "
+                f"gxy={_mean_float(metrics, 'goal_mode_xy'):.0f} "
                 f"gmean={_mean_float(metrics, 'goal_slice_mean'):.3f} "
                 f"gstd={_mean_float(metrics, 'goal_slice_std'):.3f} "
                 f"gmin={_mean_float(metrics, 'goal_slice_min'):.3f} "
