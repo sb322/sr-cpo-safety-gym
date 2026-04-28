@@ -109,8 +109,8 @@ assert "goal_mode=config.goal_mode" in src_train, \
     "real env adapter does not receive TrainConfig.goal_mode"
 assert "def desired_goal" in src_env and "def achieved_goal" in src_env, \
     "xy desired/achieved goal accessors missing"
-assert "_GOAL_LIDAR_START" in src_env and "_state_observation" in src_env, \
-    "xy state observation path does not remove target-lidar leakage"
+assert "_state_observation" in src_env and "self.achieved_goal(state)" in src_env, \
+    "xy state observation path does not append achieved robot XY"
 assert "desired_goal" in src_train and "transitions.extras[\"desired_goal\"]" in src_train, \
     "actor rollout metrics do not use desired xy goals"
 assert "goal_start=config.goal_start" in src_train and "_goal_from_obs" in src_replay, \

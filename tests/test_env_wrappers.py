@@ -126,9 +126,7 @@ def test_xy_goal_mode_uses_robot_and_target_xy_goal_space() -> None:
     state_obs = adapter._state_observation(state)
 
     assert state_obs.shape == (2, 57)
-    assert bool(jnp.allclose(state_obs[:, :16], obs[:, :16]))
-    assert bool(jnp.allclose(state_obs[:, 16:32], 0.0))
-    assert bool(jnp.allclose(state_obs[:, 32:55], obs[:, 32:55]))
+    assert bool(jnp.allclose(state_obs[:, :55], obs))
     assert bool(jnp.allclose(state_obs[:, 55:57], adapter.achieved_goal(state)))
     assert bool(jnp.allclose(adapter.desired_goal(state), mocap_pos[:, 0, :2]))
 

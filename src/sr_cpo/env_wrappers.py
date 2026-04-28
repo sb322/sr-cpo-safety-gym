@@ -16,8 +16,6 @@ import jax.numpy as jnp
 from brax.envs.wrappers import training
 from flax import struct
 
-_GOAL_LIDAR_START = 16
-_GOAL_LIDAR_END = 32
 _OBS_SLICE_GOAL_MODE = "obs_slice"
 _XY_GOAL_MODE = "xy"
 
@@ -186,10 +184,8 @@ class SafeLearningGoToGoalAdapter:
         obs = jnp.asarray(state.obs, dtype=jnp.float32)
         if self.goal_mode != _XY_GOAL_MODE:
             return obs
-        # In xy mode the external goal is passed separately. Keep obstacle and
-        # robot sensors, remove target-lidar leakage, and append robot XY so the
-        # actor/critic can interpret absolute desired/achieved XY goals.
-        obs = obs.at[..., _GOAL_LIDAR_START:_GOAL_LIDAR_END].set(0.0)
+        # Preserve the native GoToGoal observation, including egocentric target
+        # lidar, and append robot XY so hindsight goals can use achieved XY.
         return jnp.concatenate([obs, self.achieved_goal(state)], axis=-1)
 
     def reset(self, rng: jax.Array | int) -> tuple[Any, Transition]:
