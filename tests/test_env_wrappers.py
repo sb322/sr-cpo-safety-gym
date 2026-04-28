@@ -130,6 +130,12 @@ def test_xy_goal_mode_uses_robot_and_target_xy_goal_space() -> None:
     assert bool(jnp.allclose(state_obs[:, 55:57], adapter.achieved_goal(state)))
     assert bool(jnp.allclose(adapter.desired_goal(state), mocap_pos[:, 0, :2]))
 
+    adapter.goal_mode = "relative_xy"
+
+    assert bool(
+        jnp.allclose(adapter.desired_goal(state), mocap_pos[:, 0, :2] - xpos[:, 1, :2])
+    )
+
 
 def test_safe_learning_loader_bypasses_broad_benchmark_suite_init(
     tmp_path, monkeypatch

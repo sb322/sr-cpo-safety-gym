@@ -64,3 +64,26 @@ def test_hindsight_sample_uses_configured_future_goal_slice() -> None:
         jnp.allclose(batch.extras["goal"], batch.extras["future_state"][:, 1:3])
     )
     assert bool(jnp.all(jnp.isfinite(batch.extras["cost"])))
+
+
+def test_hindsight_sample_can_use_relative_future_goal_slice() -> None:
+    buffer = make_replay_buffer(
+        capacity=3, episode_length=4, observation_dim=3, action_dim=2
+    )
+    for i in range(3):
+        buffer = insert_trajectory(
+            buffer, **dict(zip(TRAJECTORY_KEYS, _trajectory(float(i)), strict=True))
+        )
+
+    batch = sample_hindsight_transitions(
+        buffer,
+        jax.random.PRNGKey(1),
+        batch_size=8,
+        goal_start=1,
+        goal_end=3,
+        relative_goal=True,
+    )
+
+    expected = batch.extras["future_state"][:, 1:3] - batch.observation[:, 1:3]
+    assert batch.extras["goal"].shape == (8, 2)
+    assert bool(jnp.allclose(batch.extras["goal"], expected))

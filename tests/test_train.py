@@ -146,6 +146,28 @@ def test_training_epoch_can_collect_xy_goals_from_real_env_adapter_path() -> Non
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
 
+def test_training_epoch_can_collect_relative_xy_goals_from_real_adapter() -> None:
+    config = replace(
+        _tiny_config(),
+        use_real_env=True,
+        goal_mode="relative_xy",
+        goal_start=3,
+        goal_dim=2,
+    )
+    adapter = FakeVectorAdapter(num_envs=config.num_envs, observation_dim=5)
+    state, objects = initialize_training(config, env_adapter=adapter)
+    state = prefill_buffer(state, objects, config)
+    training_epoch = make_training_epoch(objects, config)
+
+    _, metrics = training_epoch(state)
+
+    assert bool(jnp.all(metrics["goal_mode_xy"] == 1.0))
+    assert bool(jnp.all(metrics["goal_mode_relative"] == 1.0))
+    assert metrics["goal_slice_mean"].shape == (config.steps_per_epoch,)
+    for leaf in jax.tree_util.tree_leaves(metrics):
+        assert bool(jnp.all(jnp.isfinite(leaf)))
+
+
 def test_training_epoch_accepts_configured_goal_slice() -> None:
     config = replace(_tiny_config(), goal_start=1, goal_dim=2)
     state, objects = initialize_training(config)
@@ -241,6 +263,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "goal_start": jnp.asarray([16.0]),
         "goal_dim": jnp.asarray([16.0]),
         "goal_mode_xy": jnp.asarray([1.0]),
+        "goal_mode_relative": jnp.asarray([1.0]),
         "goal_slice_mean": jnp.asarray([0.125]),
         "goal_slice_std": jnp.asarray([0.25]),
         "goal_slice_min": jnp.asarray([-0.5]),
@@ -299,6 +322,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "gstart=16" in text
     assert "gdim=16" in text
     assert "gxy=1" in text
+    assert "grel=1" in text
     assert "gmean=0.125" in text
     assert "gstd=0.250" in text
     assert "gmin=-0.500" in text

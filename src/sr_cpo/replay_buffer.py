@@ -97,6 +97,7 @@ def sample_hindsight_transitions(
     batch_size: int,
     goal_start: int = 0,
     goal_end: int | None = None,
+    relative_goal: bool = False,
 ) -> Transition:
     """Uniformly samples transitions and relabels goals from future states."""
 
@@ -114,6 +115,8 @@ def sample_hindsight_transitions(
     next_obs = buffer.observations[traj_idx, step_idx + 1]
     future_state = buffer.observations[traj_idx, future_idx]
     goal = _goal_from_obs(future_state, goal_start, goal_end - goal_start)
+    if relative_goal:
+        goal = goal - _goal_from_obs(obs, goal_start, goal_end - goal_start)
     action = buffer.actions[traj_idx, step_idx]
     reward = buffer.rewards[traj_idx, step_idx]
     discount = buffer.discounts[traj_idx, step_idx]

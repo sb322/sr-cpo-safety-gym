@@ -45,6 +45,7 @@ from sr_cpo.replay_buffer import (
 
 Array = jax.Array
 PrintFn = Callable[[str], None]
+XY_GOAL_MODES = {"xy", "relative_xy"}
 
 
 @dataclass(frozen=True)
@@ -140,7 +141,7 @@ def _pad_action(action: Array, observation_dim: int) -> Array:
 def _mask_goal_in_state(obs: Array, config: TrainConfig) -> Array:
     """Optionally removes the external goal slice from state inputs."""
 
-    if config.goal_mode == "xy":
+    if config.goal_mode in XY_GOAL_MODES:
         return obs
     if not config.mask_goal_in_state:
         return obs
@@ -166,7 +167,7 @@ def _mask_transition_state_inputs(
 
 
 def _real_rollout_goal(env_adapter: Any, env_state: Any, config: TrainConfig) -> Array:
-    if config.goal_mode == "xy":
+    if config.goal_mode in XY_GOAL_MODES:
         goal = env_adapter.desired_goal(env_state)
     else:
         goal = _goal_from_obs(env_state.obs, config.goal_start, config.goal_dim)
@@ -348,7 +349,7 @@ def _collect_real_trajectory(
         ],
         axis=0,
     )
-    if config.goal_mode == "xy":
+    if config.goal_mode in XY_GOAL_MODES:
         rollout_goals = transitions.extras["desired_goal"]
     else:
         rollout_goals = _goal_from_obs(
@@ -452,6 +453,7 @@ def _sgd_step(
         batch_size=config.batch_size,
         goal_start=config.goal_start,
         goal_end=config.goal_start + config.goal_dim,
+        relative_goal=config.goal_mode == "relative_xy",
     )
     _assert_goal_shape(
         batch.extras["goal"], config.goal_dim, context="hindsight critic"
@@ -681,7 +683,10 @@ def make_training_epoch(
         metrics["goal_start"] = jnp.asarray(config.goal_start, dtype=jnp.float32)
         metrics["goal_dim"] = jnp.asarray(config.goal_dim, dtype=jnp.float32)
         metrics["goal_mode_xy"] = jnp.asarray(
-            config.goal_mode == "xy", dtype=jnp.float32
+            config.goal_mode in XY_GOAL_MODES, dtype=jnp.float32
+        )
+        metrics["goal_mode_relative"] = jnp.asarray(
+            config.goal_mode == "relative_xy", dtype=jnp.float32
         )
         metrics["goal_slice_mean"] = collect_metrics["goal_slice_mean"]
         metrics["goal_slice_std"] = collect_metrics["goal_slice_std"]
@@ -703,10 +708,10 @@ def initialize_training(
 ) -> tuple[TrainState, TrainingObjects]:
     """Initializes modules, optimizers, toy env state, and replay buffer."""
 
-    if config.goal_mode not in {"obs_slice", "xy"}:
-        raise ValueError("goal_mode must be 'obs_slice' or 'xy'")
-    if config.goal_mode == "xy" and config.goal_dim != 2:
-        raise ValueError("xy goal mode requires goal_dim=2")
+    if config.goal_mode not in {"obs_slice", *XY_GOAL_MODES}:
+        raise ValueError("goal_mode must be 'obs_slice', 'xy', or 'relative_xy'")
+    if config.goal_mode in XY_GOAL_MODES and config.goal_dim != 2:
+        raise ValueError("xy goal modes require goal_dim=2")
     key = jax.random.PRNGKey(config.seed)
     (
         key,
@@ -887,6 +892,7 @@ def format_epoch_metrics(
                 f"gstart={_mean_float(metrics, 'goal_start'):.0f} "
                 f"gdim={_mean_float(metrics, 'goal_dim'):.0f} "
                 f"gxy={_mean_float(metrics, 'goal_mode_xy'):.0f} "
+                f"grel={_mean_float(metrics, 'goal_mode_relative'):.0f} "
                 f"gmean={_mean_float(metrics, 'goal_slice_mean'):.3f} "
                 f"gstd={_mean_float(metrics, 'goal_slice_std'):.3f} "
                 f"gmin={_mean_float(metrics, 'goal_slice_min'):.3f} "

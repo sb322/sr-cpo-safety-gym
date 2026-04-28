@@ -18,6 +18,8 @@ from flax import struct
 
 _OBS_SLICE_GOAL_MODE = "obs_slice"
 _XY_GOAL_MODE = "xy"
+_RELATIVE_XY_GOAL_MODE = "relative_xy"
+_XY_GOAL_MODES = {_XY_GOAL_MODE, _RELATIVE_XY_GOAL_MODE}
 
 
 @struct.dataclass
@@ -132,9 +134,9 @@ class SafeLearningGoToGoalAdapter:
         goal_mode: str = _OBS_SLICE_GOAL_MODE,
         **env_kwargs: Any,
     ) -> None:
-        if goal_mode not in {_OBS_SLICE_GOAL_MODE, _XY_GOAL_MODE}:
+        if goal_mode not in {_OBS_SLICE_GOAL_MODE, *_XY_GOAL_MODES}:
             raise ValueError(
-                "goal_mode must be 'obs_slice' or 'xy', "
+                "goal_mode must be 'obs_slice', 'xy', or 'relative_xy', "
                 f"got {goal_mode!r}"
             )
         base_env = (
@@ -156,15 +158,15 @@ class SafeLearningGoToGoalAdapter:
     @property
     def observation_size(self) -> Any:
         raw_size = self.env.observation_size
-        if self.goal_mode != _XY_GOAL_MODE:
+        if self.goal_mode not in _XY_GOAL_MODES:
             return raw_size
         return int(raw_size) + 2
 
     def achieved_goal(self, state: Any) -> jax.Array:
         """Returns the robot XY achieved goal for reference-style hindsight."""
 
-        if self.goal_mode != _XY_GOAL_MODE:
-            raise ValueError("achieved_goal is only available in xy goal mode")
+        if self.goal_mode not in _XY_GOAL_MODES:
+            raise ValueError("achieved_goal is only available in xy goal modes")
         return jnp.asarray(
             state.data.xpos[..., self.base_env._robot_body_id, :2],
             dtype=jnp.float32,
@@ -173,16 +175,19 @@ class SafeLearningGoToGoalAdapter:
     def desired_goal(self, state: Any) -> jax.Array:
         """Returns the target XY desired goal for actor rollouts."""
 
-        if self.goal_mode != _XY_GOAL_MODE:
-            raise ValueError("desired_goal is only available in xy goal mode")
-        return jnp.asarray(
+        if self.goal_mode not in _XY_GOAL_MODES:
+            raise ValueError("desired_goal is only available in xy goal modes")
+        target_xy = jnp.asarray(
             state.data.mocap_pos[..., self.base_env._goal_mocap_id, :2],
             dtype=jnp.float32,
         )
+        if self.goal_mode == _RELATIVE_XY_GOAL_MODE:
+            return target_xy - self.achieved_goal(state)
+        return target_xy
 
     def _state_observation(self, state: Any) -> jax.Array:
         obs = jnp.asarray(state.obs, dtype=jnp.float32)
-        if self.goal_mode != _XY_GOAL_MODE:
+        if self.goal_mode not in _XY_GOAL_MODES:
             return obs
         # Preserve the native GoToGoal observation, including egocentric target
         # lidar, and append robot XY so hindsight goals can use achieved XY.
@@ -211,13 +216,13 @@ class SafeLearningGoToGoalAdapter:
             next_obs=obs,
             cost=cost,
             desired_goal=(
-                self.desired_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+                self.desired_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
             achieved_goal=(
-                self.achieved_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+                self.achieved_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
             next_achieved_goal=(
-                self.achieved_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+                self.achieved_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
         )
         return Transition(obs, action, reward, discount, extras)
@@ -236,14 +241,14 @@ class SafeLearningGoToGoalAdapter:
             next_obs=next_obs,
             cost=cost,
             desired_goal=(
-                self.desired_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+                self.desired_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
             achieved_goal=(
-                self.achieved_goal(state) if self.goal_mode == _XY_GOAL_MODE else None
+                self.achieved_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
             next_achieved_goal=(
                 self.achieved_goal(next_state)
-                if self.goal_mode == _XY_GOAL_MODE
+                if self.goal_mode in _XY_GOAL_MODES
                 else None
             ),
         )

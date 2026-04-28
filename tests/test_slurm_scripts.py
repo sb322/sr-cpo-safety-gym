@@ -28,6 +28,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/goal_conditioning_sweep.sh",
         "slurm/goal_mask_sweep.sh",
         "slurm/xy_goal_sweep.sh",
+        "slurm/relative_xy_sweep.sh",
     ):
         source = Path(script).read_text()
 
@@ -44,6 +45,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
             "slurm/goal_conditioning_sweep.sh",
             "slurm/goal_mask_sweep.sh",
             "slurm/xy_goal_sweep.sh",
+            "slurm/relative_xy_sweep.sh",
         ):
             assert '--goal-start "$GOAL_START"' in source
             assert '--goal-dim "$GOAL_DIM"' in source
@@ -310,6 +312,26 @@ def test_xy_goal_sweep_compares_obs_slice_and_reference_xy_goals() -> None:
     assert "gxy=" in source
 
 
+def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
+    source = Path("slurm/relative_xy_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-1" in source
+    assert "safe_relative_xy.%A_%a.out" in source
+    assert 'REL_LABELS=("xy_abs_d8" "relxy_d8")' in source
+    assert 'GOAL_MODES=("xy" "relative_xy")' in source
+    assert 'GOAL_START="55"' in source
+    assert 'GOAL_DIM="2"' in source
+    assert 'NU_C="0.0003"' in source
+    assert 'COST_LIMIT="0.0001"' in source
+    assert "--use-residual" in source
+    assert '--goal-mode "$GOAL_MODE"' in source
+    assert '--goal-start "$GOAL_START"' in source
+    assert '--goal-dim "$GOAL_DIM"' in source
+    assert "relative_goal=config.goal_mode" in source
+    assert "goal_mode_relative" in source
+    assert "grel=" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
@@ -335,6 +357,7 @@ def test_slurm_static_diff_heredocs_pass_locally() -> None:
         "slurm/goal_conditioning_sweep.sh",
         "slurm/goal_mask_sweep.sh",
         "slurm/xy_goal_sweep.sh",
+        "slurm/relative_xy_sweep.sh",
     ):
         block = _static_check_block(script)
 
