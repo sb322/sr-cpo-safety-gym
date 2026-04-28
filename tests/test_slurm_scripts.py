@@ -26,6 +26,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         "slurm/constraint_effect_3seed.sh",
         "slurm/depth_sgd4_cmdp.sh",
         "slurm/goal_conditioning_sweep.sh",
+        "slurm/goal_mask_sweep.sh",
     ):
         source = Path(script).read_text()
 
@@ -38,7 +39,7 @@ def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
         assert "ENV PREFLIGHT" in source
         assert "--use-real-env" in source
         assert "--observation-dim 55" in source
-        if script == "slurm/goal_conditioning_sweep.sh":
+        if script in ("slurm/goal_conditioning_sweep.sh", "slurm/goal_mask_sweep.sh"):
             assert '--goal-start "$GOAL_START"' in source
             assert '--goal-dim "$GOAL_DIM"' in source
         else:
@@ -264,6 +265,25 @@ def test_goal_conditioning_sweep_compares_full_obs_and_goal_lidar() -> None:
     assert "gmax=" in source
 
 
+def test_goal_mask_sweep_compares_lidar_state_masking() -> None:
+    source = Path("slurm/goal_mask_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-1" in source
+    assert "safe_goal_mask.%A_%a.out" in source
+    assert 'MASK_LABELS=("lidar_d8_unmasked" "lidar_d8_masked")' in source
+    assert 'MASK_GOAL_FLAGS=("false" "true")' in source
+    assert 'GOAL_START="16"' in source
+    assert 'GOAL_DIM="16"' in source
+    assert 'NU_C="0.0003"' in source
+    assert 'COST_LIMIT="0.0001"' in source
+    assert "--mask-goal-in-state" in source
+    assert "mask_goal_in_state" in source
+    assert "state_goal_masked" in source
+    assert "gmask=" in source
+    assert "_mask_goal_in_state(env_state.obs, config)" in source
+    assert "_mask_transition_state_inputs(batch, config)" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
@@ -287,6 +307,7 @@ def test_slurm_static_diff_heredocs_pass_locally() -> None:
         "slurm/constraint_effect_3seed.sh",
         "slurm/depth_sgd4_cmdp.sh",
         "slurm/goal_conditioning_sweep.sh",
+        "slurm/goal_mask_sweep.sh",
     ):
         block = _static_check_block(script)
 

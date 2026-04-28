@@ -9,6 +9,7 @@ from sr_cpo.env_wrappers import Transition
 from sr_cpo.train import (
     ToyEnvState,
     TrainConfig,
+    _mask_goal_in_state,
     format_epoch_metrics,
     initialize_training,
     make_training_epoch,
@@ -134,6 +135,7 @@ def test_training_epoch_accepts_configured_goal_slice() -> None:
     assert bool(jnp.all(metrics["goal_slice_std"] == 0.0))
     assert bool(jnp.all(metrics["goal_slice_min"] == 0.0))
     assert bool(jnp.all(metrics["goal_slice_max"] == 0.0))
+    assert bool(jnp.all(metrics["state_goal_masked"] == 0.0))
     for leaf in jax.tree_util.tree_leaves(metrics):
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
@@ -147,6 +149,24 @@ def test_initialize_training_rejects_invalid_goal_slice() -> None:
         assert "goal_start + goal_dim" in str(exc)
     else:
         raise AssertionError("invalid goal slice should fail before training starts")
+
+
+def test_mask_goal_in_state_zeros_only_configured_slice() -> None:
+    obs = jnp.arange(10, dtype=jnp.float32).reshape(2, 5)
+    unmasked_config = replace(
+        _tiny_config(), goal_start=1, goal_dim=2, mask_goal_in_state=False
+    )
+    masked_config = replace(
+        _tiny_config(), goal_start=1, goal_dim=2, mask_goal_in_state=True
+    )
+
+    assert bool(jnp.allclose(_mask_goal_in_state(obs, unmasked_config), obs))
+
+    masked = _mask_goal_in_state(obs, masked_config)
+
+    assert bool(jnp.allclose(masked[:, :1], obs[:, :1]))
+    assert bool(jnp.allclose(masked[:, 1:3], 0.0))
+    assert bool(jnp.allclose(masked[:, 3:], obs[:, 3:]))
 
 
 def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
@@ -198,6 +218,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "goal_slice_std": jnp.asarray([0.25]),
         "goal_slice_min": jnp.asarray([-0.5]),
         "goal_slice_max": jnp.asarray([1.5]),
+        "state_goal_masked": jnp.asarray([1.0]),
         "lambda_tilde": jnp.asarray([0.0]),
         "jc_hat": jnp.asarray([0.0]),
         "qc": jnp.asarray([0.0]),
@@ -254,6 +275,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "gstd=0.250" in text
     assert "gmin=-0.500" in text
     assert "gmax=1.500" in text
+    assert "gmask=1" in text
     assert "limit=1.00e-04" in text
     assert "pid_err=-1.00e-04" in text
     assert "S=-1.00e-03" in text

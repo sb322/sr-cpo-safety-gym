@@ -66,6 +66,7 @@ class TrainConfig:
     action_dim: int = 2
     goal_start: int = 0
     goal_dim: int = 3
+    mask_goal_in_state: bool = False
     width: int = 64
     num_blocks: int = 2
     latent_dim: int = 32
@@ -135,6 +136,32 @@ def _pad_action(action: Array, observation_dim: int) -> Array:
     return jnp.pad(action, [(0, 0)] * (action.ndim - 1) + [(0, pad)])
 
 
+def _mask_goal_in_state(obs: Array, config: TrainConfig) -> Array:
+    """Optionally removes the external goal slice from state inputs."""
+
+    if not config.mask_goal_in_state:
+        return obs
+    return obs.at[..., config.goal_start : config.goal_start + config.goal_dim].set(
+        0.0
+    )
+
+
+def _mask_transition_state_inputs(
+    transitions: Transition, config: TrainConfig
+) -> Transition:
+    """Masks state channels seen by losses while preserving replay goals."""
+
+    if not config.mask_goal_in_state:
+        return transitions
+    extras = dict(transitions.extras)
+    if "next_state" in extras:
+        extras["next_state"] = _mask_goal_in_state(extras["next_state"], config)
+    return transitions.replace(
+        observation=_mask_goal_in_state(transitions.observation, config),
+        extras=extras,
+    )
+
+
 def _toy_step(
     env_state: ToyEnvState,
     action: Array,
@@ -202,7 +229,7 @@ def _collect_toy_trajectory(
         sample = sample_tanh_gaussian(
             objects.actor,
             train_state.actor_params,
-            env_state.obs,
+            _mask_goal_in_state(env_state.obs, config),
             goal,
             actor_key,
         )
@@ -280,7 +307,7 @@ def _collect_real_trajectory(
         sample = sample_tanh_gaussian(
             objects.actor,
             train_state.actor_params,
-            env_state.obs,
+            _mask_goal_in_state(env_state.obs, config),
             goal,
             actor_key,
         )
@@ -406,6 +433,7 @@ def _sgd_step(
     _assert_goal_shape(
         batch.extras["goal"], config.goal_dim, context="hindsight critic"
     )
+    batch = _mask_transition_state_inputs(batch, config)
 
     def critic_objective(params: Any) -> tuple[Array, dict[str, Array]]:
         return critic_loss_fn(
@@ -567,6 +595,7 @@ def _sgd_step(
         "jc_hat": jc_hat,
         "dual_qc_mean": dual_aux["dual_qc_mean"],
         "cost_limit": jnp.asarray(config.cost_limit, dtype=jnp.float32),
+        "state_goal_masked": jnp.asarray(config.mask_goal_in_state, dtype=jnp.float32),
         "pid_error": pid_error,
         "pid_integral": pid_state.integral,
         "pid_raw_lambda": pid_raw_lambda.astype(jnp.float32),
@@ -830,6 +859,7 @@ def format_epoch_metrics(
                 f"gstd={_mean_float(metrics, 'goal_slice_std'):.3f} "
                 f"gmin={_mean_float(metrics, 'goal_slice_min'):.3f} "
                 f"gmax={_mean_float(metrics, 'goal_slice_max'):.3f} "
+                f"gmask={_mean_float(metrics, 'state_goal_masked'):.0f} "
                 f"λ̃={_mean_float(metrics, 'lambda_tilde'):.4f} "
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
                 f"Qc={_mean_float(metrics, 'qc'):.4f} "
