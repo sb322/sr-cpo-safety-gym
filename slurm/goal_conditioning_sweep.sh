@@ -120,7 +120,8 @@ for marker in [
     "c_grad_nan", "a_grad_nan", "cc_grad_nan",
     "pid_error", "pid_integral", "pid_raw_lambda", "lambda_qc_actor",
     "goal_dist", "goal_reached", "gdist=", "reached=",
-    "goal_slice_mean", "goal_slice_std", "gstart=", "gdim=", "gmean=", "gstd=",
+    "goal_slice_mean", "goal_slice_std", "goal_slice_min", "goal_slice_max",
+    "gstart=", "gdim=", "gmean=", "gstd=", "gmin=", "gmax=",
 ]:
     assert marker in src_losses or marker in src_train, f"probe missing - {marker}"
 

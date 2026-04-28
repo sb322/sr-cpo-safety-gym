@@ -256,8 +256,12 @@ def test_goal_conditioning_sweep_compares_full_obs_and_goal_lidar() -> None:
     assert "goal_reached" in source
     assert "goal_slice_mean" in source
     assert "goal_slice_std" in source
+    assert "goal_slice_min" in source
+    assert "goal_slice_max" in source
     assert "gstart=" in source
     assert "gdim=" in source
+    assert "gmin=" in source
+    assert "gmax=" in source
 
 
 def test_production_launchers_use_calibrated_cost_limit() -> None:

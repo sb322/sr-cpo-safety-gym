@@ -43,7 +43,7 @@ def test_replay_buffer_insert_wraps_and_tracks_size() -> None:
     assert bool(jnp.allclose(buffer.observations[0, 0, 0], 2.0))
 
 
-def test_hindsight_sample_uses_future_state_as_goal() -> None:
+def test_hindsight_sample_uses_configured_future_goal_slice() -> None:
     buffer = make_replay_buffer(
         capacity=3, episode_length=4, observation_dim=3, action_dim=2
     )
@@ -53,12 +53,14 @@ def test_hindsight_sample_uses_future_state_as_goal() -> None:
         )
 
     batch = sample_hindsight_transitions(
-        buffer, jax.random.PRNGKey(0), batch_size=8, goal_start=0, goal_end=2
+        buffer, jax.random.PRNGKey(0), batch_size=8, goal_start=1, goal_end=3
     )
 
     assert batch.observation.shape == (8, 3)
     assert batch.action.shape == (8, 2)
     assert batch.extras["goal"].shape == (8, 2)
     assert bool(jnp.all(batch.extras["future_index"] > batch.extras["step_index"]))
-    assert bool(jnp.allclose(batch.extras["goal"], batch.extras["future_state"][:, :2]))
+    assert bool(
+        jnp.allclose(batch.extras["goal"], batch.extras["future_state"][:, 1:3])
+    )
     assert bool(jnp.all(jnp.isfinite(batch.extras["cost"])))

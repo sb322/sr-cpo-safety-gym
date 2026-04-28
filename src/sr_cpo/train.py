@@ -247,6 +247,8 @@ def _collect_toy_trajectory(
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
         "goal_slice_mean": jnp.mean(rollout_goals),
         "goal_slice_std": jnp.std(rollout_goals),
+        "goal_slice_min": jnp.min(rollout_goals),
+        "goal_slice_max": jnp.max(rollout_goals),
     }
     next_state = train_state.replace(
         key=key,
@@ -323,6 +325,8 @@ def _collect_real_trajectory(
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
         "goal_slice_mean": jnp.mean(rollout_goals),
         "goal_slice_std": jnp.std(rollout_goals),
+        "goal_slice_min": jnp.min(rollout_goals),
+        "goal_slice_max": jnp.max(rollout_goals),
     }
     next_state = train_state.replace(
         key=key,
@@ -626,6 +630,8 @@ def make_training_epoch(
         metrics["goal_dim"] = jnp.asarray(config.goal_dim, dtype=jnp.float32)
         metrics["goal_slice_mean"] = collect_metrics["goal_slice_mean"]
         metrics["goal_slice_std"] = collect_metrics["goal_slice_std"]
+        metrics["goal_slice_min"] = collect_metrics["goal_slice_min"]
+        metrics["goal_slice_max"] = collect_metrics["goal_slice_max"]
         return state, metrics
 
     @jax.jit
@@ -822,6 +828,8 @@ def format_epoch_metrics(
                 f"gdim={_mean_float(metrics, 'goal_dim'):.0f} "
                 f"gmean={_mean_float(metrics, 'goal_slice_mean'):.3f} "
                 f"gstd={_mean_float(metrics, 'goal_slice_std'):.3f} "
+                f"gmin={_mean_float(metrics, 'goal_slice_min'):.3f} "
+                f"gmax={_mean_float(metrics, 'goal_slice_max'):.3f} "
                 f"λ̃={_mean_float(metrics, 'lambda_tilde'):.4f} "
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
                 f"Qc={_mean_float(metrics, 'qc'):.4f} "
