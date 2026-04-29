@@ -327,9 +327,12 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert 'GOAL_START="55"' in source
     assert 'GOAL_DIM="2"' in source
     assert 'SGD_STEPS="${SGD_STEPS_OVERRIDE:-4}"' in source
-    assert 'NU_C="0.0003"' in source
-    assert 'ENTROPY_PARAM="0.5"' in source
-    assert 'COST_LIMIT="0.0001"' in source
+    assert 'NU_C="${NU_C_OVERRIDE:-0.0003}"' in source
+    assert 'ENTROPY_PARAM="${ENTROPY_PARAM_OVERRIDE:-0.5}"' in source
+    assert 'COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"' in source
+    assert 'PID_KP="${PID_KP_OVERRIDE:-5.0}"' in source
+    assert 'PID_KI="${PID_KI_OVERRIDE:-0.1}"' in source
+    assert 'PID_KD="${PID_KD_OVERRIDE:-0.0}"' in source
     assert "--use-residual" in source
     assert '--goal-mode "$GOAL_MODE"' in source
     assert '--goal-start "$GOAL_START"' in source
