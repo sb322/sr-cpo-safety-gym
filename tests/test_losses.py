@@ -233,6 +233,8 @@ def test_actor_loss_forward_and_grad_finite_on_random_batch() -> None:
     assert bool(jnp.isfinite(probes["constraint_term_mean"]))
     assert "qc_actor_mean" in probes
     assert bool(jnp.isfinite(probes["qc_actor_mean"]))
+    assert "qc_action_gap_mean" in probes
+    assert bool(jnp.isfinite(probes["qc_action_gap_mean"]))
 
 
 def test_actor_loss_supports_reference_l2_scores() -> None:
@@ -264,6 +266,7 @@ def test_actor_loss_supports_reference_l2_scores() -> None:
     assert bool(jnp.isfinite(loss))
     _assert_finite_tree(probes)
     assert bool(probes["f_term_mean"] <= 0.0)
+    assert bool(jnp.isfinite(probes["qc_actor_std"]))
 
 
 def test_actor_loss_forward_and_grad_finite_with_zero_row_inputs() -> None:

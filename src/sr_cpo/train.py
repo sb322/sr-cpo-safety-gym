@@ -620,6 +620,10 @@ def _sgd_step(
         "log_std_mean_actor": a_aux["log_std_mean"],
         "f_term_actor": a_aux["f_term_mean"],
         "qc_actor": a_aux["qc_actor_mean"],
+        "qc_zero_action_actor": a_aux["qc_zero_action_mean"],
+        "qc_neg_action_actor": a_aux["qc_neg_action_mean"],
+        "qc_action_gap_actor": a_aux["qc_action_gap_mean"],
+        "qc_actor_std": a_aux["qc_actor_std"],
         "lambda_qc_actor": a_aux["constraint_term_mean"],
         "nu_c": jnp.asarray(config.nu_c, dtype=jnp.float32),
         "entropy_param": jnp.asarray(config.entropy_param, dtype=jnp.float32),
@@ -931,6 +935,10 @@ def format_epoch_metrics(
                 f"pid_err={_mean_float(metrics, 'pid_error'):.2e} "
                 f"S={_mean_float(metrics, 'pid_integral'):.2e} "
                 f"λraw={_mean_float(metrics, 'pid_raw_lambda'):.2e} "
+                f"Qc0={_mean_float(metrics, 'qc_zero_action_actor'):.4f} "
+                f"Qc-={_mean_float(metrics, 'qc_neg_action_actor'):.4f} "
+                f"ΔQc_a0={_mean_float(metrics, 'qc_action_gap_actor'):.2e} "
+                f"Qcstd={_mean_float(metrics, 'qc_actor_std'):.2e} "
                 f"λQc_a={_mean_float(metrics, 'lambda_qc_actor'):.2e} "
                 f"nu_c={_mean_float(metrics, 'nu_c'):.1e}"
             ),
