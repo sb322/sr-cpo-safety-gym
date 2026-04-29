@@ -348,6 +348,23 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert '--entropy-param "$ENTROPY_PARAM"' in source
 
 
+def test_relxy_cmdp_sweep_reuses_reference_relative_xy_arm() -> None:
+    source = Path("slurm/relxy_cmdp_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-3" in source
+    assert "safe_relxy_cmdp.%A_%a.out" in source
+    assert (
+        'CMDP_LABELS=("pid_off" "cmdp_nuc1e-2" '
+        '"cmdp_nuc3e-3" "cmdp_nuc1e-3")'
+    ) in source
+    assert 'NU_C_VALUES=("0.0003" "0.01" "0.003" "0.001")' in source
+    assert 'PID_KP_VALUES=("0.0" "5.0" "5.0" "5.0")' in source
+    assert 'PID_KI_VALUES=("0.0" "0.1" "0.1" "0.1")' in source
+    assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
