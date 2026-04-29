@@ -13,6 +13,7 @@ from flax import linen as nn
 Array = jax.Array
 Params = Mapping[str, Any]
 LOG_2 = jnp.log(2.0)
+_L2_EPS = 1e-12
 
 
 def row_l2_normalize(x: Array, eps: float = 1e-12) -> tuple[Array, Array]:
@@ -28,6 +29,40 @@ def contrastive_logits(sa_repr: Array, g_repr: Array, tau: float) -> Array:
     sa_hat, _ = row_l2_normalize(sa_repr)
     g_hat, _ = row_l2_normalize(g_repr)
     return jnp.einsum("ik,jk->ij", sa_hat, g_hat) / tau
+
+
+def _pairwise_scores(
+    sa_repr: Array,
+    g_repr: Array,
+    *,
+    tau: float,
+    score_mode: str,
+) -> Array:
+    if score_mode == "cosine":
+        return contrastive_logits(sa_repr, g_repr, tau)
+    if score_mode == "l2":
+        sq_dist = jnp.sum(
+            jnp.square(sa_repr[:, None, :] - g_repr[None, :, :]), axis=-1
+        )
+        return -jnp.sqrt(sq_dist + _L2_EPS)
+    raise ValueError(f"unknown critic score mode: {score_mode!r}")
+
+
+def _paired_scores(
+    sa_repr: Array,
+    g_repr: Array,
+    *,
+    tau: float,
+    score_mode: str,
+) -> Array:
+    if score_mode == "cosine":
+        sa_hat, _ = row_l2_normalize(sa_repr)
+        g_hat, _ = row_l2_normalize(g_repr)
+        return jnp.sum(sa_hat * g_hat, axis=-1) / tau
+    if score_mode == "l2":
+        sq_dist = jnp.sum(jnp.square(sa_repr - g_repr), axis=-1)
+        return -jnp.sqrt(sq_dist + _L2_EPS)
+    raise ValueError(f"unknown critic score mode: {score_mode!r}")
 
 
 def _has_nonfinite(x: Array) -> Array:
@@ -101,6 +136,7 @@ def critic_loss_fn(
     tau: float = 0.1,
     rho: float = 0.1,
     goal: Array | None = None,
+    score_mode: str = "cosine",
 ) -> tuple[Array, dict[str, Array]]:
     """Symmetric InfoNCE reward-critic loss with autograd-safe row-L2."""
 
@@ -115,9 +151,12 @@ def critic_loss_fn(
     sa_norm_min = jnp.min(jnp.linalg.norm(sa_repr, axis=-1))
     g_norm_min = jnp.min(jnp.linalg.norm(g_repr, axis=-1))
 
-    sa_hat, _ = row_l2_normalize(sa_repr)
-    g_hat, _ = row_l2_normalize(g_repr)
-    logits = jnp.einsum("ik,jk->ij", sa_hat, g_hat) / tau
+    logits = _pairwise_scores(
+        sa_repr,
+        g_repr,
+        tau=tau,
+        score_mode=score_mode,
+    )
     logsumexp = jax.nn.logsumexp(logits, axis=1)
     diag = jnp.diag(logits)
     loss = -jnp.mean(diag - logsumexp) + rho * jnp.mean(logsumexp**2)
@@ -160,6 +199,7 @@ def actor_loss_fn(
     nu_f: float = 1.0,
     nu_c: float = 1.0,
     goal: Array | None = None,
+    score_mode: str = "cosine",
 ) -> tuple[Array, dict[str, Array]]:
     """Preconditioned SR-CPO actor loss with component probes."""
 
@@ -171,9 +211,12 @@ def actor_loss_fn(
     g_repr = g_encoder.apply(critic_params["g_encoder"], goal_arr)
     sa_norm_min = jnp.min(jnp.linalg.norm(sa_repr, axis=-1))
     g_norm_min = jnp.min(jnp.linalg.norm(g_repr, axis=-1))
-    sa_hat, _ = row_l2_normalize(sa_repr)
-    g_hat, _ = row_l2_normalize(g_repr)
-    f_value = jnp.sum(sa_hat * g_hat, axis=-1) / tau
+    f_value = _paired_scores(
+        sa_repr,
+        g_repr,
+        tau=tau,
+        score_mode=score_mode,
+    )
 
     alpha = jnp.exp(log_alpha)
     qc_value = cost_critic.apply(

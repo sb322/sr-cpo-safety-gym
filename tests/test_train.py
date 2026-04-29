@@ -265,6 +265,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "goal_mode_xy": jnp.asarray([1.0]),
         "goal_mode_relative": jnp.asarray([1.0]),
         "native_goal_lidar_masked": jnp.asarray([1.0]),
+        "score_mode_l2": jnp.asarray([1.0]),
         "goal_slice_mean": jnp.asarray([0.125]),
         "goal_slice_std": jnp.asarray([0.25]),
         "goal_slice_min": jnp.asarray([-0.5]),
@@ -325,6 +326,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "gxy=1" in text
     assert "grel=1" in text
     assert "glmask=1" in text
+    assert "score_l2=1" in text
     assert "gmean=0.125" in text
     assert "gstd=0.250" in text
     assert "gmin=-0.500" in text

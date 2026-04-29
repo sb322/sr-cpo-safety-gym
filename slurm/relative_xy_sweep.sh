@@ -11,7 +11,7 @@
 #SBATCH --gres=gpu:a100_40g:1
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
-#SBATCH --array=0-2
+#SBATCH --array=0-3
 
 set -euo pipefail
 
@@ -49,13 +49,15 @@ export PYTHONUNBUFFERED=1
 export JAX_COMPILATION_CACHE_DIR="/mmfs1/home/sb3222/.cache/jax"
 mkdir -p "$JAX_COMPILATION_CACHE_DIR"
 
-REL_LABELS=("xy_abs_d8" "relxy_d8" "relxy_lidar_mask_d8")
-GOAL_MODES=("xy" "relative_xy" "relative_xy")
-LIDAR_MASK_FLAGS=("false" "false" "true")
+REL_LABELS=("xy_abs_d8" "relxy_d8" "relxy_lidar_mask_d8" "relxy_lidar_mask_l2_d8")
+GOAL_MODES=("xy" "relative_xy" "relative_xy" "relative_xy")
+LIDAR_MASK_FLAGS=("false" "false" "true" "true")
+SCORE_MODES=("cosine" "cosine" "cosine" "l2")
 TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
 REL_LABEL="${REL_LABELS[$TASK_ID]}"
 GOAL_MODE="${GOAL_MODES[$TASK_ID]}"
 MASK_NATIVE_GOAL_LIDAR="${LIDAR_MASK_FLAGS[$TASK_ID]}"
+SCORE_MODE="${SCORE_MODES[$TASK_ID]}"
 NUM_BLOCK="8"
 GOAL_START="55"
 GOAL_DIM="2"
@@ -80,6 +82,7 @@ echo "SLURM_ARRAY_TASK_ID=$TASK_ID"
 echo "REL_LABEL=$REL_LABEL"
 echo "GOAL_MODE=$GOAL_MODE"
 echo "MASK_NATIVE_GOAL_LIDAR=$MASK_NATIVE_GOAL_LIDAR"
+echo "CRITIC_SCORE_MODE=$SCORE_MODE"
 echo "NUM_BLOCKS=$NUM_BLOCK"
 echo "USE_RESIDUAL=true"
 echo "SGD_STEPS=$SGD_STEPS"
@@ -121,12 +124,18 @@ assert "mask_native_goal_lidar" in src_env and "mask_native_goal_lidar" in src_t
     "native target-lidar mask switch missing"
 assert "_GOAL_LIDAR_START:_GOAL_LIDAR_END" in src_env, \
     "native target-lidar slice is not masked in env adapter"
+assert "critic_score_mode: str = \"cosine\"" in src_train, \
+    "critic score-mode switch missing"
+assert "score_mode=config.critic_score_mode" in src_train, \
+    "critic/actor losses do not receive the score-mode switch"
+assert 'score_mode == "l2"' in src_losses and "-jnp.sqrt(sq_dist" in src_losses, \
+    "reference-style negative-L2 score mode missing"
 assert "relative_goal=config.goal_mode == \"relative_xy\"" in src_train, \
     "hindsight critic goals are not switched to relative mode"
 assert "goal = goal - _goal_from_obs(obs" in src_replay, \
     "relative hindsight goals do not subtract current achieved XY"
-assert "goal_mode_relative" in src_train and "grel=" in src_train and "glmask=" in src_train, \
-    "relative/native-mask goal-mode logging missing"
+assert "goal_mode_relative" in src_train and "grel=" in src_train and "glmask=" in src_train \
+    and "score_l2=" in src_train, "relative/native-mask/score logging missing"
 assert "def desired_goal" in src_env and "def achieved_goal" in src_env, \
     "xy desired/achieved goal accessors missing"
 assert "_state_observation" in src_env and "self.achieved_goal(state)" in src_env, \
@@ -209,6 +218,7 @@ echo "===== TRAINING ====="
     --grad-clip-norm 10.0 \
     --tau 0.1 \
     --rho 0.1 \
+    --critic-score-mode "$SCORE_MODE" \
     --gamma-c 0.99 \
     --target-update-rate 0.005 \
     --nu-f 1.0 \

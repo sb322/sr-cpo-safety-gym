@@ -176,6 +176,24 @@ def test_contrastive_logits_are_temperature_bounded_after_row_l2() -> None:
     assert bool(jnp.all(jnp.abs(logits) <= (1.0 / tau) + 1e-6))
 
 
+def test_critic_loss_supports_reference_l2_scores() -> None:
+    params, transition, sa_encoder, g_encoder, _ = _critic_setup()
+
+    loss, probes = critic_loss_fn(
+        params,
+        transition,
+        sa_encoder=sa_encoder,
+        g_encoder=g_encoder,
+        score_mode="l2",
+    )
+
+    assert loss.shape == ()
+    assert bool(jnp.isfinite(loss))
+    _assert_finite_tree(probes)
+    assert bool(probes["logits_pos"] <= 0.0)
+    assert bool(probes["logits_neg"] <= 0.0)
+
+
 def test_actor_loss_forward_and_grad_finite_on_random_batch() -> None:
     (
         actor_params,
@@ -215,6 +233,37 @@ def test_actor_loss_forward_and_grad_finite_on_random_batch() -> None:
     assert bool(jnp.isfinite(probes["constraint_term_mean"]))
     assert "qc_actor_mean" in probes
     assert bool(jnp.isfinite(probes["qc_actor_mean"]))
+
+
+def test_actor_loss_supports_reference_l2_scores() -> None:
+    (
+        actor_params,
+        critic_params,
+        cost_critic_params,
+        transition,
+        actor,
+        sa_encoder,
+        g_encoder,
+        cost_critic,
+    ) = _actor_setup()
+    loss, probes = actor_loss_fn(
+        actor_params,
+        critic_params,
+        cost_critic_params,
+        transition,
+        jax.random.PRNGKey(8),
+        actor=actor,
+        sa_encoder=sa_encoder,
+        g_encoder=g_encoder,
+        cost_critic=cost_critic,
+        log_alpha=jnp.array(0.0, dtype=jnp.float32),
+        lambda_tilde=jnp.array(0.0, dtype=jnp.float32),
+        score_mode="l2",
+    )
+
+    assert bool(jnp.isfinite(loss))
+    _assert_finite_tree(probes)
+    assert bool(probes["f_term_mean"] <= 0.0)
 
 
 def test_actor_loss_forward_and_grad_finite_with_zero_row_inputs() -> None:

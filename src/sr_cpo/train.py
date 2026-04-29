@@ -78,6 +78,7 @@ class TrainConfig:
     grad_clip_norm: float = 10.0
     tau: float = 0.1
     rho: float = 0.1
+    critic_score_mode: str = "cosine"
     gamma_c: float = 0.99
     target_update_rate: float = 0.005
     nu_f: float = 1.0
@@ -469,6 +470,7 @@ def _sgd_step(
             g_encoder=objects.g_encoder,
             tau=config.tau,
             rho=config.rho,
+            score_mode=config.critic_score_mode,
         )
 
     (c_loss, c_aux), c_grads = jax.value_and_grad(
@@ -495,6 +497,7 @@ def _sgd_step(
             tau=config.tau,
             nu_f=config.nu_f,
             nu_c=config.nu_c,
+            score_mode=config.critic_score_mode,
         )
 
     (a_loss, a_aux), a_grads = jax.value_and_grad(
@@ -615,6 +618,9 @@ def _sgd_step(
         "qc_actor": a_aux["qc_actor_mean"],
         "lambda_qc_actor": a_aux["constraint_term_mean"],
         "nu_c": jnp.asarray(config.nu_c, dtype=jnp.float32),
+        "score_mode_l2": jnp.asarray(
+            config.critic_score_mode == "l2", dtype=jnp.float32
+        ),
         "alpha_clip": jnp.minimum(jnp.exp(log_alpha) / config.alpha_max, 1.0),
         "cost": cc_aux["mean_cost"],
         "qc": cc_aux["mean_qc"],
@@ -692,6 +698,9 @@ def make_training_epoch(
         metrics["native_goal_lidar_masked"] = jnp.asarray(
             config.mask_native_goal_lidar, dtype=jnp.float32
         )
+        metrics["score_mode_l2"] = jnp.asarray(
+            config.critic_score_mode == "l2", dtype=jnp.float32
+        )
         metrics["goal_slice_mean"] = collect_metrics["goal_slice_mean"]
         metrics["goal_slice_std"] = collect_metrics["goal_slice_std"]
         metrics["goal_slice_min"] = collect_metrics["goal_slice_min"]
@@ -716,6 +725,8 @@ def initialize_training(
         raise ValueError("goal_mode must be 'obs_slice', 'xy', or 'relative_xy'")
     if config.goal_mode in XY_GOAL_MODES and config.goal_dim != 2:
         raise ValueError("xy goal modes require goal_dim=2")
+    if config.critic_score_mode not in {"cosine", "l2"}:
+        raise ValueError("critic_score_mode must be 'cosine' or 'l2'")
     key = jax.random.PRNGKey(config.seed)
     (
         key,
@@ -899,6 +910,7 @@ def format_epoch_metrics(
                 f"gxy={_mean_float(metrics, 'goal_mode_xy'):.0f} "
                 f"grel={_mean_float(metrics, 'goal_mode_relative'):.0f} "
                 f"glmask={_mean_float(metrics, 'native_goal_lidar_masked'):.0f} "
+                f"score_l2={_mean_float(metrics, 'score_mode_l2'):.0f} "
                 f"gmean={_mean_float(metrics, 'goal_slice_mean'):.3f} "
                 f"gstd={_mean_float(metrics, 'goal_slice_std'):.3f} "
                 f"gmin={_mean_float(metrics, 'goal_slice_min'):.3f} "
