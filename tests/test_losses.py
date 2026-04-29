@@ -356,8 +356,19 @@ def test_alpha_loss_forward_and_grad_finite() -> None:
     log_prob = jnp.asarray([-1.0, -0.5, -2.0, -1.5], dtype=jnp.float32)
     log_alpha = jnp.asarray(0.0, dtype=jnp.float32)
 
-    loss, grad = jax.value_and_grad(alpha_loss_fn)(log_alpha, log_prob, 2)
+    loss, grad = jax.value_and_grad(alpha_loss_fn)(log_alpha, log_prob, 2, 0.5)
 
     assert loss.shape == ()
     assert bool(jnp.isfinite(loss))
     assert bool(jnp.isfinite(grad))
+    assert float(grad) > 0.0
+
+
+def test_alpha_loss_observed_entropy_would_reduce_alpha() -> None:
+    log_prob = jnp.asarray([-1.35, -1.35], dtype=jnp.float32)
+    log_alpha = jnp.asarray(0.0, dtype=jnp.float32)
+
+    _, grad = jax.value_and_grad(alpha_loss_fn)(log_alpha, log_prob, 2, 0.5)
+
+    next_log_alpha = log_alpha - 3e-4 * grad
+    assert float(next_log_alpha) < float(log_alpha)

@@ -288,7 +288,17 @@ def cost_critic_loss_fn(
     return loss, probes
 
 
-def alpha_loss_fn(log_alpha: Array, log_prob: Array, action_size: int) -> Array:
-    """SAC entropy-temperature loss."""
+def alpha_loss_fn(
+    log_alpha: Array,
+    log_prob: Array,
+    action_size: int,
+    entropy_param: float = 0.5,
+) -> Array:
+    """SAC entropy-temperature loss with a scaled target entropy."""
 
-    return -jnp.mean(log_alpha * (log_prob + action_size))
+    alpha = jnp.exp(log_alpha)
+    target_entropy = -jnp.asarray(
+        entropy_param * action_size, dtype=jnp.asarray(log_prob).dtype
+    )
+    entropy_error = jax.lax.stop_gradient(-log_prob - target_entropy)
+    return alpha * jnp.mean(entropy_error)

@@ -83,6 +83,7 @@ class TrainConfig:
     target_update_rate: float = 0.005
     nu_f: float = 1.0
     nu_c: float = 1.0
+    entropy_param: float = 0.5
     alpha_max: float = 1.0
     cost_limit: float = 0.0001
     pid_kp: float = 5.0
@@ -545,7 +546,10 @@ def _sgd_step(
         alpha_key,
     )
     alpha_loss, alpha_grad = jax.value_and_grad(alpha_loss_fn)(
-        train_state.log_alpha, sample.log_prob, objects.action_dim
+        train_state.log_alpha,
+        sample.log_prob,
+        objects.action_dim,
+        config.entropy_param,
     )
     alpha_updates, log_alpha_opt_state = objects.alpha_optimizer.update(
         alpha_grad, train_state.log_alpha_opt_state, train_state.log_alpha
@@ -618,6 +622,10 @@ def _sgd_step(
         "qc_actor": a_aux["qc_actor_mean"],
         "lambda_qc_actor": a_aux["constraint_term_mean"],
         "nu_c": jnp.asarray(config.nu_c, dtype=jnp.float32),
+        "entropy_param": jnp.asarray(config.entropy_param, dtype=jnp.float32),
+        "target_entropy": -jnp.asarray(
+            config.entropy_param * objects.action_dim, dtype=jnp.float32
+        ),
         "score_mode_l2": jnp.asarray(
             config.critic_score_mode == "l2", dtype=jnp.float32
         ),
@@ -958,6 +966,8 @@ def format_epoch_metrics(
                 "         "
                 f"actor[α={_mean_float(metrics, 'alpha_actor'):.4f} "
                 f"log_p={_mean_float(metrics, 'log_prob_actor'):.3f} "
+                f"H={-_mean_float(metrics, 'log_prob_actor'):.3f} "
+                f"H_tgt={-_mean_float(metrics, 'target_entropy'):.3f} "
                 f"α·log_p={_mean_float(metrics, 'alpha_logprob_actor'):.3f} "
                 f"gauss_lp={_mean_float(metrics, 'gaussian_logp_actor'):.3f} "
                 f"sat_corr={_mean_float(metrics, 'sat_correction_actor'):.3f} "

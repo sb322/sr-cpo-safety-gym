@@ -64,6 +64,7 @@ GOAL_DIM="2"
 SEED="0"
 SGD_STEPS="4"
 NU_C="0.0003"
+ENTROPY_PARAM="0.5"
 COST_LIMIT="0.0001"
 PID_KP="5.0"
 PID_KI="0.1"
@@ -89,6 +90,7 @@ echo "SGD_STEPS=$SGD_STEPS"
 echo "GOAL_START=$GOAL_START"
 echo "GOAL_DIM=$GOAL_DIM"
 echo "NU_C=$NU_C"
+echo "ENTROPY_PARAM=$ENTROPY_PARAM"
 echo "SEED=$SEED"
 echo "COST_LIMIT=$COST_LIMIT"
 echo "PID_KP=$PID_KP"
@@ -130,6 +132,10 @@ assert "score_mode=config.critic_score_mode" in src_train, \
     "critic/actor losses do not receive the score-mode switch"
 assert 'score_mode == "l2"' in src_losses and "-jnp.sqrt(sq_dist" in src_losses, \
     "reference-style negative-L2 score mode missing"
+assert "entropy_param: float = 0.5" in src_train, \
+    "scaled target entropy config missing"
+assert "target_entropy" in src_losses and "-log_prob - target_entropy" in src_losses, \
+    "reference-style alpha temperature loss missing"
 assert "relative_goal=config.goal_mode == \"relative_xy\"" in src_train, \
     "hindsight critic goals are not switched to relative mode"
 assert "goal = goal - _goal_from_obs(obs" in src_replay, \
@@ -223,6 +229,7 @@ echo "===== TRAINING ====="
     --target-update-rate 0.005 \
     --nu-f 1.0 \
     --nu-c "$NU_C" \
+    --entropy-param "$ENTROPY_PARAM" \
     --alpha-max 1.0 \
     --cost-limit "$COST_LIMIT" \
     --pid-kp "$PID_KP" \

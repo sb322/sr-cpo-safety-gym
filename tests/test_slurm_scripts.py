@@ -327,6 +327,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert 'GOAL_START="55"' in source
     assert 'GOAL_DIM="2"' in source
     assert 'NU_C="0.0003"' in source
+    assert 'ENTROPY_PARAM="0.5"' in source
     assert 'COST_LIMIT="0.0001"' in source
     assert "--use-residual" in source
     assert '--goal-mode "$GOAL_MODE"' in source
@@ -340,6 +341,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "glmask=" in source
     assert "--critic-score-mode" in source
     assert "score_l2=" in source
+    assert '--entropy-param "$ENTROPY_PARAM"' in source
 
 
 def test_production_launchers_use_calibrated_cost_limit() -> None:

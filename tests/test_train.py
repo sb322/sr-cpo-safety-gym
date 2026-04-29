@@ -310,6 +310,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "qc_actor": jnp.asarray([0.25]),
         "lambda_qc_actor": jnp.asarray([0.125]),
         "nu_c": jnp.asarray([0.01]),
+        "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
     }
 
