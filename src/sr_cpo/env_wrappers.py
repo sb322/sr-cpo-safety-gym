@@ -20,6 +20,8 @@ _OBS_SLICE_GOAL_MODE = "obs_slice"
 _XY_GOAL_MODE = "xy"
 _RELATIVE_XY_GOAL_MODE = "relative_xy"
 _XY_GOAL_MODES = {_XY_GOAL_MODE, _RELATIVE_XY_GOAL_MODE}
+_GOAL_LIDAR_START = 16
+_GOAL_LIDAR_END = 32
 
 
 @struct.dataclass
@@ -132,6 +134,7 @@ class SafeLearningGoToGoalAdapter:
         episode_length: int = 1000,
         action_repeat: int = 1,
         goal_mode: str = _OBS_SLICE_GOAL_MODE,
+        mask_native_goal_lidar: bool = False,
         **env_kwargs: Any,
     ) -> None:
         if goal_mode not in {_OBS_SLICE_GOAL_MODE, *_XY_GOAL_MODES}:
@@ -150,6 +153,7 @@ class SafeLearningGoToGoalAdapter:
         self.num_envs = num_envs
         self.episode_length = episode_length
         self.goal_mode = goal_mode
+        self.mask_native_goal_lidar = mask_native_goal_lidar
 
     @property
     def action_size(self) -> int:
@@ -189,8 +193,11 @@ class SafeLearningGoToGoalAdapter:
         obs = jnp.asarray(state.obs, dtype=jnp.float32)
         if self.goal_mode not in _XY_GOAL_MODES:
             return obs
+        if getattr(self, "mask_native_goal_lidar", False):
+            obs = obs.at[..., _GOAL_LIDAR_START:_GOAL_LIDAR_END].set(0.0)
         # Preserve the native GoToGoal observation, including egocentric target
-        # lidar, and append robot XY so hindsight goals can use achieved XY.
+        # lidar unless explicitly masked, and append robot XY so hindsight goals
+        # can use achieved XY.
         return jnp.concatenate([obs, self.achieved_goal(state)], axis=-1)
 
     def reset(self, rng: jax.Array | int) -> tuple[Any, Transition]:
@@ -303,6 +310,7 @@ def make_safe_learning_go_to_goal(
     num_envs: int,
     episode_length: int = 1000,
     goal_mode: str = _OBS_SLICE_GOAL_MODE,
+    mask_native_goal_lidar: bool = False,
     **env_kwargs: Any,
 ) -> SafeLearningGoToGoalAdapter:
     """Creates the vectorized safe-learning GoToGoal adapter."""
@@ -311,5 +319,6 @@ def make_safe_learning_go_to_goal(
         num_envs=num_envs,
         episode_length=episode_length,
         goal_mode=goal_mode,
+        mask_native_goal_lidar=mask_native_goal_lidar,
         **env_kwargs,
     )

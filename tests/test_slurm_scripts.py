@@ -315,10 +315,11 @@ def test_xy_goal_sweep_compares_obs_slice_and_reference_xy_goals() -> None:
 def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     source = Path("slurm/relative_xy_sweep.sh").read_text()
 
-    assert "#SBATCH --array=0-1" in source
+    assert "#SBATCH --array=0-2" in source
     assert "safe_relative_xy.%A_%a.out" in source
-    assert 'REL_LABELS=("xy_abs_d8" "relxy_d8")' in source
-    assert 'GOAL_MODES=("xy" "relative_xy")' in source
+    assert 'REL_LABELS=("xy_abs_d8" "relxy_d8" "relxy_lidar_mask_d8")' in source
+    assert 'GOAL_MODES=("xy" "relative_xy" "relative_xy")' in source
+    assert 'LIDAR_MASK_FLAGS=("false" "false" "true")' in source
     assert 'GOAL_START="55"' in source
     assert 'GOAL_DIM="2"' in source
     assert 'NU_C="0.0003"' in source
@@ -330,6 +331,9 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "relative_goal=config.goal_mode" in source
     assert "goal_mode_relative" in source
     assert "grel=" in source
+    assert "--mask-native-goal-lidar" in source
+    assert "mask_native_goal_lidar" in source
+    assert "glmask=" in source
 
 
 def test_production_launchers_use_calibrated_cost_limit() -> None:

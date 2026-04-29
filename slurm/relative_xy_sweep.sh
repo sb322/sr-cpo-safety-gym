@@ -11,7 +11,7 @@
 #SBATCH --gres=gpu:a100_40g:1
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00
-#SBATCH --array=0-1
+#SBATCH --array=0-2
 
 set -euo pipefail
 
@@ -49,11 +49,13 @@ export PYTHONUNBUFFERED=1
 export JAX_COMPILATION_CACHE_DIR="/mmfs1/home/sb3222/.cache/jax"
 mkdir -p "$JAX_COMPILATION_CACHE_DIR"
 
-REL_LABELS=("xy_abs_d8" "relxy_d8")
-GOAL_MODES=("xy" "relative_xy")
+REL_LABELS=("xy_abs_d8" "relxy_d8" "relxy_lidar_mask_d8")
+GOAL_MODES=("xy" "relative_xy" "relative_xy")
+LIDAR_MASK_FLAGS=("false" "false" "true")
 TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
 REL_LABEL="${REL_LABELS[$TASK_ID]}"
 GOAL_MODE="${GOAL_MODES[$TASK_ID]}"
+MASK_NATIVE_GOAL_LIDAR="${LIDAR_MASK_FLAGS[$TASK_ID]}"
 NUM_BLOCK="8"
 GOAL_START="55"
 GOAL_DIM="2"
@@ -65,6 +67,11 @@ PID_KP="5.0"
 PID_KI="0.1"
 PID_KD="0.0"
 
+MASK_ARGS=()
+if [ "$MASK_NATIVE_GOAL_LIDAR" = "true" ]; then
+    MASK_ARGS+=(--mask-native-goal-lidar)
+fi
+
 echo "===== ENVIRONMENT ====="
 echo "HOST=$(hostname)"
 echo "PYTHON=$("$PYTHON" --version 2>&1)"
@@ -72,6 +79,7 @@ echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-not set}"
 echo "SLURM_ARRAY_TASK_ID=$TASK_ID"
 echo "REL_LABEL=$REL_LABEL"
 echo "GOAL_MODE=$GOAL_MODE"
+echo "MASK_NATIVE_GOAL_LIDAR=$MASK_NATIVE_GOAL_LIDAR"
 echo "NUM_BLOCKS=$NUM_BLOCK"
 echo "USE_RESIDUAL=true"
 echo "SGD_STEPS=$SGD_STEPS"
@@ -109,12 +117,16 @@ assert "\"relative_xy\"" in src_env and "\"relative_xy\"" in src_train, \
     "relative_xy goal mode missing"
 assert "target_xy - self.achieved_goal(state)" in src_env, \
     "relative_xy actor goal is not target_xy - current_robot_xy"
+assert "mask_native_goal_lidar" in src_env and "mask_native_goal_lidar" in src_train, \
+    "native target-lidar mask switch missing"
+assert "_GOAL_LIDAR_START:_GOAL_LIDAR_END" in src_env, \
+    "native target-lidar slice is not masked in env adapter"
 assert "relative_goal=config.goal_mode == \"relative_xy\"" in src_train, \
     "hindsight critic goals are not switched to relative mode"
 assert "goal = goal - _goal_from_obs(obs" in src_replay, \
     "relative hindsight goals do not subtract current achieved XY"
-assert "goal_mode_relative" in src_train and "grel=" in src_train, \
-    "relative goal-mode logging missing"
+assert "goal_mode_relative" in src_train and "grel=" in src_train and "glmask=" in src_train, \
+    "relative/native-mask goal-mode logging missing"
 assert "def desired_goal" in src_env and "def achieved_goal" in src_env, \
     "xy desired/achieved goal accessors missing"
 assert "_state_observation" in src_env and "self.achieved_goal(state)" in src_env, \
@@ -144,16 +156,18 @@ PYCHECK
 
 echo ""
 echo "===== ENV PREFLIGHT ====="
-"$PYTHON" - "$GOAL_MODE" <<'PYCHECK'
+"$PYTHON" - "$GOAL_MODE" "$MASK_NATIVE_GOAL_LIDAR" <<'PYCHECK'
 import sys
 import jax
 from sr_cpo.env_wrappers import make_safe_learning_go_to_goal
 
 goal_mode = sys.argv[1]
+mask_native_goal_lidar = sys.argv[2] == "true"
 adapter = make_safe_learning_go_to_goal(
     num_envs=4,
     episode_length=1000,
     goal_mode=goal_mode,
+    mask_native_goal_lidar=mask_native_goal_lidar,
 )
 state, transition = adapter.reset(jax.random.PRNGKey(0))
 print(f"obs.shape = {transition.observation.shape}")
@@ -162,6 +176,7 @@ print(f"goal_dist = {transition.extras['goal_dist']}")
 print(f"goal_reached = {transition.extras['goal_reached']}")
 print(f"desired_goal = {transition.extras['desired_goal']}")
 print(f"achieved_goal = {transition.extras['achieved_goal']}")
+print(f"goal_lidar = {transition.observation[:, 16:32]}")
 print(f"robot_xy_from_obs = {transition.observation[:, -2:]}")
 PYCHECK
 [ $? -ne 0 ] && exit 1
@@ -185,6 +200,7 @@ echo "===== TRAINING ====="
     --goal-mode "$GOAL_MODE" \
     --goal-start "$GOAL_START" \
     --goal-dim "$GOAL_DIM" \
+    "${MASK_ARGS[@]}" \
     --width 256 \
     --num-blocks "$NUM_BLOCK" \
     --use-residual \

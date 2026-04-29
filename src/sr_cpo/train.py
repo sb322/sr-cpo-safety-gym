@@ -69,6 +69,7 @@ class TrainConfig:
     goal_start: int = 0
     goal_dim: int = 3
     mask_goal_in_state: bool = False
+    mask_native_goal_lidar: bool = False
     width: int = 64
     num_blocks: int = 2
     latent_dim: int = 32
@@ -688,6 +689,9 @@ def make_training_epoch(
         metrics["goal_mode_relative"] = jnp.asarray(
             config.goal_mode == "relative_xy", dtype=jnp.float32
         )
+        metrics["native_goal_lidar_masked"] = jnp.asarray(
+            config.mask_native_goal_lidar, dtype=jnp.float32
+        )
         metrics["goal_slice_mean"] = collect_metrics["goal_slice_mean"]
         metrics["goal_slice_std"] = collect_metrics["goal_slice_std"]
         metrics["goal_slice_min"] = collect_metrics["goal_slice_min"]
@@ -729,6 +733,7 @@ def initialize_training(
             num_envs=config.num_envs,
             episode_length=config.env_episode_length,
             goal_mode=config.goal_mode,
+            mask_native_goal_lidar=config.mask_native_goal_lidar,
         )
         env_state, reset_transition = env_adapter.reset(env_key)
         runtime_observation_dim = int(reset_transition.observation.shape[-1])
@@ -893,6 +898,7 @@ def format_epoch_metrics(
                 f"gdim={_mean_float(metrics, 'goal_dim'):.0f} "
                 f"gxy={_mean_float(metrics, 'goal_mode_xy'):.0f} "
                 f"grel={_mean_float(metrics, 'goal_mode_relative'):.0f} "
+                f"glmask={_mean_float(metrics, 'native_goal_lidar_masked'):.0f} "
                 f"gmean={_mean_float(metrics, 'goal_slice_mean'):.3f} "
                 f"gstd={_mean_float(metrics, 'goal_slice_std'):.3f} "
                 f"gmin={_mean_float(metrics, 'goal_slice_min'):.3f} "
