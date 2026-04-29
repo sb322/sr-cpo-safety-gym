@@ -326,6 +326,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert 'SCORE_MODES=("cosine" "cosine" "cosine" "l2")' in source
     assert 'GOAL_START="55"' in source
     assert 'GOAL_DIM="2"' in source
+    assert 'SGD_STEPS="${SGD_STEPS_OVERRIDE:-4}"' in source
     assert 'NU_C="0.0003"' in source
     assert 'ENTROPY_PARAM="0.5"' in source
     assert 'COST_LIMIT="0.0001"' in source
