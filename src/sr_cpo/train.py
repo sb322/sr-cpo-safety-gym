@@ -220,6 +220,7 @@ def _toy_step(
             "cost": cost.astype(jnp.float32),
             "hazard_violation": (dist_to_hazard <= 0.20).astype(jnp.float32),
             "vase_displaced": jnp.zeros_like(cost, dtype=jnp.float32),
+            "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
             "cost_residual_violation": jnp.zeros_like(cost, dtype=jnp.float32),
             "min_hazard_dist": dist_to_hazard.astype(jnp.float32),
             "min_vase_dist": jnp.full_like(cost, -1.0, dtype=jnp.float32),
@@ -312,6 +313,9 @@ def _collect_toy_trajectory(
         ),
         "vase_displaced": _mean_transition_extra(
             transitions.extras, "vase_displaced", transitions.extras["cost"]
+        ),
+        "vase_disp_valid": _mean_transition_extra(
+            transitions.extras, "vase_displacement_valid", transitions.extras["cost"]
         ),
         "cost_residual_viol": _mean_transition_extra(
             transitions.extras, "cost_residual_violation", transitions.extras["cost"]
@@ -422,6 +426,9 @@ def _collect_real_trajectory(
         ),
         "vase_displaced": _mean_transition_extra(
             transitions.extras, "vase_displaced", transitions.extras["cost"]
+        ),
+        "vase_disp_valid": _mean_transition_extra(
+            transitions.extras, "vase_displacement_valid", transitions.extras["cost"]
         ),
         "cost_residual_viol": _mean_transition_extra(
             transitions.extras, "cost_residual_violation", transitions.extras["cost"]
@@ -778,6 +785,7 @@ def make_training_epoch(
         metrics["rollout_reward"] = collect_metrics["reward"]
         metrics["hazard_viol"] = collect_metrics["hazard_viol"]
         metrics["vase_displaced"] = collect_metrics["vase_displaced"]
+        metrics["vase_disp_valid"] = collect_metrics["vase_disp_valid"]
         metrics["cost_residual_viol"] = collect_metrics["cost_residual_viol"]
         metrics["min_hazard_dist"] = collect_metrics["min_hazard_dist"]
         metrics["min_vase_dist"] = collect_metrics["min_vase_dist"]
@@ -1005,6 +1013,7 @@ def format_epoch_metrics(
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
                 f"hazard={_mean_float(metrics, 'hazard_viol'):.4f} "
                 f"vase_disp={_mean_float(metrics, 'vase_displaced'):.4f} "
+                f"vase_valid={_mean_float(metrics, 'vase_disp_valid'):.0f} "
                 f"cost_resid={_mean_float(metrics, 'cost_residual_viol'):.4f} "
                 f"min_haz={_mean_float(metrics, 'min_hazard_dist'):.3f} "
                 f"min_vase={_mean_float(metrics, 'min_vase_dist'):.3f} "

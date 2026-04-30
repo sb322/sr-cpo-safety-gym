@@ -259,6 +259,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "cost": jnp.asarray([0.0]),
         "hazard_viol": jnp.asarray([0.125]),
         "vase_displaced": jnp.asarray([0.25]),
+        "vase_disp_valid": jnp.asarray([1.0]),
         "cost_residual_viol": jnp.asarray([0.375]),
         "min_hazard_dist": jnp.asarray([0.456]),
         "min_vase_dist": jnp.asarray([0.789]),
@@ -340,6 +341,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "rew=-1.2345" in text
     assert "hazard=0.1250" in text
     assert "vase_disp=0.2500" in text
+    assert "vase_valid=1" in text
     assert "cost_resid=0.3750" in text
     assert "min_haz=0.456" in text
     assert "min_vase=0.789" in text

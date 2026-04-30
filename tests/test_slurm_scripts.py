@@ -374,9 +374,11 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert '--entropy-param "$ENTROPY_PARAM"' in source
     assert "hazard_violation" in source
     assert "vase_displaced" in source
+    assert "vase_displacement_valid" in source
     assert "cost_residual_violation" in source
     assert "hazard=" in source
     assert "vase_disp=" in source
+    assert "vase_valid=" in source
     assert "cost_resid=" in source
     assert "min_haz=" in source
     assert "min_vase=" in source

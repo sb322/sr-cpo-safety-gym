@@ -287,6 +287,7 @@ class SafeLearningGoToGoalAdapter:
             return {
                 "hazard_violation": zeros,
                 "vase_displaced": zeros,
+                "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
                 "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
                 "min_hazard_dist": missing_dist,
                 "min_vase_dist": missing_dist,
@@ -298,6 +299,7 @@ class SafeLearningGoToGoalAdapter:
             return {
                 "hazard_violation": zeros,
                 "vase_displaced": zeros,
+                "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
                 "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
                 "min_hazard_dist": missing_dist,
                 "min_vase_dist": missing_dist,
@@ -330,7 +332,7 @@ class SafeLearningGoToGoalAdapter:
             vase_dist = jnp.linalg.norm(vase_xy - robot_xy[..., None, :], axis=-1)
             min_vase_dist = jnp.min(vase_dist, axis=-1).astype(jnp.float32)
 
-        vase_displaced = zeros
+        raw_vase_displaced = zeros
         qpos_ids = tuple(getattr(base_env, "_vases_qpos_ids", ()))
         init_q = getattr(base_env, "_init_q", None)
         if len(qpos_ids) > 0 and init_q is not None and hasattr(data, "qpos"):
@@ -343,7 +345,17 @@ class SafeLearningGoToGoalAdapter:
             vase_xy_now = qpos[..., xy_qpos_ids]
             vase_xy_initial = init_q[xy_qpos_ids]
             vase_disp = jnp.linalg.norm(vase_xy_now - vase_xy_initial, axis=-1)
-            vase_displaced = jnp.any(vase_disp > 0.2, axis=-1).astype(jnp.float32)
+            raw_vase_displaced = jnp.any(vase_disp > 0.2, axis=-1).astype(
+                jnp.float32
+            )
+
+        hard_violation = (cost > 0.0).astype(jnp.float32)
+        # The safe-learning env has changed its reset/layout internals across
+        # versions. If our qpos-based vase probe over-explains the env's own
+        # binary cost, disable it and leave those costs in the residual bucket.
+        vase_valid = jnp.all(raw_vase_displaced <= hard_violation).astype(jnp.float32)
+        vase_displaced = jnp.where(vase_valid > 0.5, raw_vase_displaced, zeros)
+        vase_displacement_valid = jnp.ones_like(cost, dtype=jnp.float32) * vase_valid
 
         if has_hazards and has_vases:
             min_obstacle_dist = jnp.minimum(min_hazard_dist, min_vase_dist)
@@ -355,10 +367,11 @@ class SafeLearningGoToGoalAdapter:
             min_obstacle_dist = missing_dist
 
         explained = jnp.maximum(hazard_violation, vase_displaced)
-        cost_residual = jnp.maximum((cost > 0.0).astype(jnp.float32) - explained, 0.0)
+        cost_residual = jnp.maximum(hard_violation - explained, 0.0)
         return {
             "hazard_violation": hazard_violation,
             "vase_displaced": vase_displaced,
+            "vase_displacement_valid": vase_displacement_valid,
             "cost_residual_violation": cost_residual,
             "min_hazard_dist": min_hazard_dist,
             "min_vase_dist": min_vase_dist,
@@ -397,6 +410,12 @@ class SafeLearningGoToGoalAdapter:
         vase_displaced = jnp.asarray(
             safety.get("vase_displaced", zeros), dtype=jnp.float32
         )
+        vase_displacement_valid = jnp.asarray(
+            safety.get(
+                "vase_displacement_valid", jnp.ones_like(cost, dtype=jnp.float32)
+            ),
+            dtype=jnp.float32,
+        )
         cost_residual_violation = jnp.asarray(
             safety.get("cost_residual_violation", (cost > 0.0).astype(jnp.float32)),
             dtype=jnp.float32,
@@ -417,6 +436,7 @@ class SafeLearningGoToGoalAdapter:
             "cost": cost,
             "hazard_violation": hazard_violation,
             "vase_displaced": vase_displaced,
+            "vase_displacement_valid": vase_displacement_valid,
             "cost_residual_violation": cost_residual_violation,
             "min_hazard_dist": min_hazard_dist,
             "min_vase_dist": min_vase_dist,

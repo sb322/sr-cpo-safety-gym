@@ -154,9 +154,10 @@ assert "goal = goal - _goal_from_obs(obs" in src_replay, \
 assert "goal_mode_relative" in src_train and "grel=" in src_train and "glmask=" in src_train \
     and "score_l2=" in src_train, "relative/native-mask/score logging missing"
 assert "hazard_violation" in src_env and "vase_displaced" in src_env \
+    and "vase_displacement_valid" in src_env \
     and "cost_residual_violation" in src_env, "safety component adapter diagnostics missing"
-assert "hazard=" in src_train and "vase_disp=" in src_train and "cost_resid=" in src_train \
-    and "min_haz=" in src_train and "min_vase=" in src_train, \
+assert "hazard=" in src_train and "vase_disp=" in src_train and "vase_valid=" in src_train \
+    and "cost_resid=" in src_train and "min_haz=" in src_train and "min_vase=" in src_train, \
     "safety component training logs missing"
 assert "def desired_goal" in src_env and "def achieved_goal" in src_env, \
     "xy desired/achieved goal accessors missing"
