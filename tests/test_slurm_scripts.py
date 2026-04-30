@@ -11,6 +11,15 @@ def _static_check_block(script: str) -> str:
     return blocks[0]
 
 
+def test_all_slurm_scripts_use_wulver_standard_qos_triplet() -> None:
+    for script in Path("slurm").glob("*.sh"):
+        source = script.read_text()
+
+        assert "#SBATCH --partition=gpu" in source
+        assert "#SBATCH --account=ag2682" in source
+        assert "#SBATCH --qos=standard" in source
+
+
 def test_slurm_scripts_have_wulver_header_and_static_gate() -> None:
     for script in (
         "slurm/smoke.sh",
@@ -384,8 +393,8 @@ def test_relxy_cmdp_sweep_reuses_reference_relative_xy_arm() -> None:
     assert "export COST_RETURN_LOSS_WEIGHT_OVERRIDE=" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source
-    assert "#SBATCH --gres=gpu:a100:1" in source
-    assert "#SBATCH --mem=16G" in source
+    assert "#SBATCH --gres=gpu:a100_40g:1" in source
+    assert "#SBATCH --mem=32G" in source
     assert "#SBATCH --time=00:30:00" in source
     assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
 
@@ -414,8 +423,8 @@ def test_relxy_pid_pressure_sweep_tests_kp_with_decay() -> None:
     assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source
-    assert "#SBATCH --gres=gpu:a100:1" in source
-    assert "#SBATCH --mem=16G" in source
+    assert "#SBATCH --gres=gpu:a100_40g:1" in source
+    assert "#SBATCH --mem=32G" in source
     assert "#SBATCH --time=00:30:00" in source
 
 
@@ -450,8 +459,8 @@ def test_relxy_final_3seed_compares_baseline_and_cmdp_candidates() -> None:
     assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source
-    assert "#SBATCH --gres=gpu:a100:1" in source
-    assert "#SBATCH --mem=16G" in source
+    assert "#SBATCH --gres=gpu:a100_40g:1" in source
+    assert "#SBATCH --mem=32G" in source
     assert "#SBATCH --time=00:30:00" in source
 
 
