@@ -372,6 +372,14 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "--critic-score-mode" in source
     assert "score_l2=" in source
     assert '--entropy-param "$ENTROPY_PARAM"' in source
+    assert "hazard_violation" in source
+    assert "vase_displaced" in source
+    assert "cost_residual_violation" in source
+    assert "hazard=" in source
+    assert "vase_disp=" in source
+    assert "cost_resid=" in source
+    assert "min_haz=" in source
+    assert "min_vase=" in source
 
 
 def test_relxy_cmdp_sweep_reuses_reference_relative_xy_arm() -> None:

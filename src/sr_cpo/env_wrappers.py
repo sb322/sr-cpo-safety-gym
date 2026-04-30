@@ -219,11 +219,13 @@ class SafeLearningGoToGoalAdapter:
         reward = jnp.asarray(state.reward, dtype=jnp.float32)
         discount = jnp.ones_like(reward, dtype=jnp.float32)
         cost = _cost_from_info(state.info)
+        safety_components = self._safety_components(state, cost)
         extras = self._extras(
             state_info=state.info,
             state_obs=obs,
             next_obs=obs,
             cost=cost,
+            safety_components=safety_components,
             desired_goal=(
                 self.desired_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
@@ -244,6 +246,7 @@ class SafeLearningGoToGoalAdapter:
         reward = jnp.asarray(next_state.reward, dtype=jnp.float32)
         discount = 1.0 - jnp.asarray(next_state.done, dtype=jnp.float32)
         cost = _cost_from_info(next_state.info)
+        safety_components = self._safety_components(next_state, cost)
         cost_zero_action = None
         cost_neg_action = None
         if self.probe_counterfactual_costs:
@@ -256,6 +259,7 @@ class SafeLearningGoToGoalAdapter:
             state_obs=obs,
             next_obs=next_obs,
             cost=cost,
+            safety_components=safety_components,
             cost_zero_action=cost_zero_action,
             cost_neg_action=cost_neg_action,
             desired_goal=(
@@ -272,6 +276,95 @@ class SafeLearningGoToGoalAdapter:
         )
         return Transition(obs, action, reward, discount, extras)
 
+    def _safety_components(self, state: Any, cost: jax.Array) -> dict[str, jax.Array]:
+        """Returns interpretable safety diagnostics for safe-learning GoToGoal."""
+
+        cost = jnp.asarray(cost, dtype=jnp.float32)
+        zeros = jnp.zeros_like(cost, dtype=jnp.float32)
+        missing_dist = jnp.full_like(cost, -1.0, dtype=jnp.float32)
+        data = getattr(state, "data", None)
+        if data is None or not hasattr(data, "xpos"):
+            return {
+                "hazard_violation": zeros,
+                "vase_displaced": zeros,
+                "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
+                "min_hazard_dist": missing_dist,
+                "min_vase_dist": missing_dist,
+                "min_obstacle_dist": missing_dist,
+            }
+
+        base_env = self.base_env
+        if not hasattr(base_env, "_robot_body_id"):
+            return {
+                "hazard_violation": zeros,
+                "vase_displaced": zeros,
+                "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
+                "min_hazard_dist": missing_dist,
+                "min_vase_dist": missing_dist,
+                "min_obstacle_dist": missing_dist,
+            }
+
+        xpos = jnp.asarray(data.xpos, dtype=jnp.float32)
+        robot_xy = xpos[..., int(base_env._robot_body_id), :2]
+
+        hazard_ids = tuple(getattr(base_env, "_hazard_body_ids", ()))
+        hazard_violation = zeros
+        min_hazard_dist = missing_dist
+        has_hazards = len(hazard_ids) > 0
+        if has_hazards:
+            hazard_xy = xpos[
+                ..., jnp.asarray(hazard_ids, dtype=jnp.int32), :2
+            ]
+            hazard_dist = jnp.linalg.norm(
+                hazard_xy - robot_xy[..., None, :], axis=-1
+            )
+            min_hazard_dist = jnp.min(hazard_dist, axis=-1).astype(jnp.float32)
+            # safe-learning GoToGoal uses this exact 0.2 threshold in get_cost.
+            hazard_violation = (min_hazard_dist <= 0.2).astype(jnp.float32)
+
+        vase_ids = tuple(getattr(base_env, "_vase_body_ids", ()))
+        min_vase_dist = missing_dist
+        has_vases = len(vase_ids) > 0
+        if has_vases:
+            vase_xy = xpos[..., jnp.asarray(vase_ids, dtype=jnp.int32), :2]
+            vase_dist = jnp.linalg.norm(vase_xy - robot_xy[..., None, :], axis=-1)
+            min_vase_dist = jnp.min(vase_dist, axis=-1).astype(jnp.float32)
+
+        vase_displaced = zeros
+        qpos_ids = tuple(getattr(base_env, "_vases_qpos_ids", ()))
+        init_q = getattr(base_env, "_init_q", None)
+        if len(qpos_ids) > 0 and init_q is not None and hasattr(data, "qpos"):
+            xy_qpos_ids = jnp.stack(
+                [jnp.asarray(ids, dtype=jnp.int32)[:2] for ids in qpos_ids],
+                axis=0,
+            )
+            qpos = jnp.asarray(data.qpos, dtype=jnp.float32)
+            init_q = jnp.asarray(init_q, dtype=jnp.float32)
+            vase_xy_now = qpos[..., xy_qpos_ids]
+            vase_xy_initial = init_q[xy_qpos_ids]
+            vase_disp = jnp.linalg.norm(vase_xy_now - vase_xy_initial, axis=-1)
+            vase_displaced = jnp.any(vase_disp > 0.2, axis=-1).astype(jnp.float32)
+
+        if has_hazards and has_vases:
+            min_obstacle_dist = jnp.minimum(min_hazard_dist, min_vase_dist)
+        elif has_hazards:
+            min_obstacle_dist = min_hazard_dist
+        elif has_vases:
+            min_obstacle_dist = min_vase_dist
+        else:
+            min_obstacle_dist = missing_dist
+
+        explained = jnp.maximum(hazard_violation, vase_displaced)
+        cost_residual = jnp.maximum((cost > 0.0).astype(jnp.float32) - explained, 0.0)
+        return {
+            "hazard_violation": hazard_violation,
+            "vase_displaced": vase_displaced,
+            "cost_residual_violation": cost_residual,
+            "min_hazard_dist": min_hazard_dist,
+            "min_vase_dist": min_vase_dist,
+            "min_obstacle_dist": min_obstacle_dist.astype(jnp.float32),
+        }
+
     @staticmethod
     def _extras(
         *,
@@ -279,6 +372,7 @@ class SafeLearningGoToGoalAdapter:
         state_obs: jax.Array,
         next_obs: jax.Array,
         cost: jax.Array,
+        safety_components: Mapping[str, jax.Array] | None = None,
         cost_zero_action: jax.Array | None = None,
         cost_neg_action: jax.Array | None = None,
         desired_goal: jax.Array | None = None,
@@ -296,10 +390,37 @@ class SafeLearningGoToGoalAdapter:
         )
         # GoToGoal does not emit a wall-distance diagnostic; keep a finite placeholder.
         d_wall = _info_array(state_info, "d_wall", zeros).astype(jnp.float32)
+        safety = {} if safety_components is None else safety_components
+        hazard_violation = jnp.asarray(
+            safety.get("hazard_violation", zeros), dtype=jnp.float32
+        )
+        vase_displaced = jnp.asarray(
+            safety.get("vase_displaced", zeros), dtype=jnp.float32
+        )
+        cost_residual_violation = jnp.asarray(
+            safety.get("cost_residual_violation", (cost > 0.0).astype(jnp.float32)),
+            dtype=jnp.float32,
+        )
+        missing_dist = jnp.full_like(cost, -1.0, dtype=jnp.float32)
+        min_hazard_dist = jnp.asarray(
+            safety.get("min_hazard_dist", missing_dist), dtype=jnp.float32
+        )
+        min_vase_dist = jnp.asarray(
+            safety.get("min_vase_dist", missing_dist), dtype=jnp.float32
+        )
+        min_obstacle_dist = jnp.asarray(
+            safety.get("min_obstacle_dist", missing_dist), dtype=jnp.float32
+        )
         extras = {
             "state": state_obs,
             "next_state": next_obs,
             "cost": cost,
+            "hazard_violation": hazard_violation,
+            "vase_displaced": vase_displaced,
+            "cost_residual_violation": cost_residual_violation,
+            "min_hazard_dist": min_hazard_dist,
+            "min_vase_dist": min_vase_dist,
+            "min_obstacle_dist": min_obstacle_dist,
             "goal_dist": goal_dist,
             "goal_reached": goal_reached,
             "d_wall": d_wall,

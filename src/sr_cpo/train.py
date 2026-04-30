@@ -218,6 +218,12 @@ def _toy_step(
             "state": obs,
             "next_state": next_obs,
             "cost": cost.astype(jnp.float32),
+            "hazard_violation": (dist_to_hazard <= 0.20).astype(jnp.float32),
+            "vase_displaced": jnp.zeros_like(cost, dtype=jnp.float32),
+            "cost_residual_violation": jnp.zeros_like(cost, dtype=jnp.float32),
+            "min_hazard_dist": dist_to_hazard.astype(jnp.float32),
+            "min_vase_dist": jnp.full_like(cost, -1.0, dtype=jnp.float32),
+            "min_obstacle_dist": dist_to_hazard.astype(jnp.float32),
             "goal_dist": goal_error.astype(jnp.float32),
             "goal_reached": goal_reached,
             "d_wall": d_wall.astype(jnp.float32),
@@ -235,6 +241,12 @@ def _collect_trajectory(
     if objects.env_adapter is not None:
         return _collect_real_trajectory(train_state, objects, config)
     return _collect_toy_trajectory(train_state, objects, config)
+
+
+def _mean_transition_extra(
+    extras: Mapping[str, Array], key: str, reference: Array
+) -> Array:
+    return jnp.mean(jnp.asarray(extras.get(key, jnp.zeros_like(reference))))
 
 
 def _collect_toy_trajectory(
@@ -295,6 +307,24 @@ def _collect_toy_trajectory(
         "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
+        "hazard_viol": _mean_transition_extra(
+            transitions.extras, "hazard_violation", transitions.extras["cost"]
+        ),
+        "vase_displaced": _mean_transition_extra(
+            transitions.extras, "vase_displaced", transitions.extras["cost"]
+        ),
+        "cost_residual_viol": _mean_transition_extra(
+            transitions.extras, "cost_residual_violation", transitions.extras["cost"]
+        ),
+        "min_hazard_dist": _mean_transition_extra(
+            transitions.extras, "min_hazard_dist", transitions.extras["cost"]
+        ),
+        "min_vase_dist": _mean_transition_extra(
+            transitions.extras, "min_vase_dist", transitions.extras["cost"]
+        ),
+        "min_obstacle_dist": _mean_transition_extra(
+            transitions.extras, "min_obstacle_dist", transitions.extras["cost"]
+        ),
         "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
         "goal_slice_mean": jnp.mean(rollout_goals),
@@ -387,6 +417,24 @@ def _collect_real_trajectory(
         "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
+        "hazard_viol": _mean_transition_extra(
+            transitions.extras, "hazard_violation", transitions.extras["cost"]
+        ),
+        "vase_displaced": _mean_transition_extra(
+            transitions.extras, "vase_displaced", transitions.extras["cost"]
+        ),
+        "cost_residual_viol": _mean_transition_extra(
+            transitions.extras, "cost_residual_violation", transitions.extras["cost"]
+        ),
+        "min_hazard_dist": _mean_transition_extra(
+            transitions.extras, "min_hazard_dist", transitions.extras["cost"]
+        ),
+        "min_vase_dist": _mean_transition_extra(
+            transitions.extras, "min_vase_dist", transitions.extras["cost"]
+        ),
+        "min_obstacle_dist": _mean_transition_extra(
+            transitions.extras, "min_obstacle_dist", transitions.extras["cost"]
+        ),
         "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
         "goal_slice_mean": jnp.mean(rollout_goals),
@@ -728,6 +776,12 @@ def make_training_epoch(
         metrics["hard_viol"] = collect_metrics["hard_viol"]
         metrics["rollout_cost"] = collect_metrics["cost"]
         metrics["rollout_reward"] = collect_metrics["reward"]
+        metrics["hazard_viol"] = collect_metrics["hazard_viol"]
+        metrics["vase_displaced"] = collect_metrics["vase_displaced"]
+        metrics["cost_residual_viol"] = collect_metrics["cost_residual_viol"]
+        metrics["min_hazard_dist"] = collect_metrics["min_hazard_dist"]
+        metrics["min_vase_dist"] = collect_metrics["min_vase_dist"]
+        metrics["min_obstacle_dist"] = collect_metrics["min_obstacle_dist"]
         metrics["goal_dist"] = collect_metrics["goal_dist"]
         metrics["goal_reached"] = collect_metrics["goal_reached"]
         metrics["goal_start"] = jnp.asarray(config.goal_start, dtype=jnp.float32)
@@ -949,6 +1003,12 @@ def format_epoch_metrics(
                 "         "
                 f"hard_viol={_mean_float(metrics, 'hard_viol'):.4f} "
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
+                f"hazard={_mean_float(metrics, 'hazard_viol'):.4f} "
+                f"vase_disp={_mean_float(metrics, 'vase_displaced'):.4f} "
+                f"cost_resid={_mean_float(metrics, 'cost_residual_viol'):.4f} "
+                f"min_haz={_mean_float(metrics, 'min_hazard_dist'):.3f} "
+                f"min_vase={_mean_float(metrics, 'min_vase_dist'):.3f} "
+                f"min_obs={_mean_float(metrics, 'min_obstacle_dist'):.3f} "
                 f"cost0={_mean_float(metrics, 'cost_zero_action'):.4f} "
                 f"cost-={_mean_float(metrics, 'cost_neg_action'):.4f} "
                 f"cost-cost0={_mean_float(metrics, 'cost_action_minus_zero'):.4f} "
