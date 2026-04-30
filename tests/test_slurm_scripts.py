@@ -337,6 +337,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert 'PID_KP="${PID_KP_OVERRIDE:-5.0}"' in source
     assert 'PID_KI="${PID_KI_OVERRIDE:-0.1}"' in source
     assert 'PID_KD="${PID_KD_OVERRIDE:-0.0}"' in source
+    assert 'PID_INTEGRAL_DECAY="${PID_INTEGRAL_DECAY_OVERRIDE:-1.0}"' in source
     assert (
         'PROBE_COUNTERFACTUAL_COSTS="${PROBE_COUNTERFACTUAL_COSTS_OVERRIDE:-false}"'
         in source
@@ -345,6 +346,9 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert '--cost-return-loss-weight "$COST_RETURN_LOSS_WEIGHT"' in source
     assert "cost_return_loss_weight" in source
     assert "Qc-Jc=" in source
+    assert "pid_integral_decay" in source
+    assert "Sdecay=" in source
+    assert '--pid-integral-decay "$PID_INTEGRAL_DECAY"' in source
     assert "--use-residual" in source
     assert '--goal-mode "$GOAL_MODE"' in source
     assert '--goal-start "$GOAL_START"' in source
@@ -371,9 +375,11 @@ def test_relxy_cmdp_sweep_reuses_reference_relative_xy_arm() -> None:
     ) in source
     assert 'NU_C_VALUES=("0.0003" "0.01" "0.003" "0.001")' in source
     assert 'PID_KP_VALUES=("0.0" "5.0" "5.0" "5.0")' in source
-    assert 'PID_KI_VALUES=("0.0" "0.1" "0.1" "0.1")' in source
+    assert 'PID_KI_VALUES=("0.0" "0.01" "0.01" "0.01")' in source
+    assert 'PID_INTEGRAL_DECAY_VALUES=("1.0" "0.95" "0.95" "0.95")' in source
     assert 'COST_RETURN_LOSS_WEIGHT_VALUES=("0.0" "1.0" "1.0" "1.0")' in source
     assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export PID_INTEGRAL_DECAY_OVERRIDE=" in source
     assert "export COST_RETURN_LOSS_WEIGHT_OVERRIDE=" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source

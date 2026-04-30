@@ -68,3 +68,43 @@ def test_pid_lagrangian_derivative_uses_previous_error() -> None:
 
     assert float(state.previous_error) == 0.5
     assert float(state.lambda_tilde) == 0.0
+
+
+def test_pid_lagrangian_decays_positive_integral_when_under_budget() -> None:
+    state = make_pid_state()
+    state = state.replace(integral=jnp.asarray(10.0, dtype=jnp.float32))
+
+    state = update_pid_lagrangian(
+        state,
+        estimated_cost=jnp.asarray(0.0, dtype=jnp.float32),
+        budget=1.0,
+        kp=0.0,
+        ki=1.0,
+        kd=0.0,
+        integral_min=-100.0,
+        integral_max=100.0,
+        integral_decay=0.5,
+    )
+
+    assert float(state.integral) == 4.0
+    assert float(state.lambda_tilde) == 4.0
+
+
+def test_pid_lagrangian_does_not_decay_integral_when_over_budget() -> None:
+    state = make_pid_state()
+    state = state.replace(integral=jnp.asarray(10.0, dtype=jnp.float32))
+
+    state = update_pid_lagrangian(
+        state,
+        estimated_cost=jnp.asarray(2.0, dtype=jnp.float32),
+        budget=1.0,
+        kp=0.0,
+        ki=1.0,
+        kd=0.0,
+        integral_min=-100.0,
+        integral_max=100.0,
+        integral_decay=0.5,
+    )
+
+    assert float(state.integral) == 11.0
+    assert float(state.lambda_tilde) == 11.0

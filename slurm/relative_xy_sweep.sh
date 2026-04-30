@@ -70,6 +70,7 @@ COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"
 PID_KP="${PID_KP_OVERRIDE:-5.0}"
 PID_KI="${PID_KI_OVERRIDE:-0.1}"
 PID_KD="${PID_KD_OVERRIDE:-0.0}"
+PID_INTEGRAL_DECAY="${PID_INTEGRAL_DECAY_OVERRIDE:-1.0}"
 PROBE_COUNTERFACTUAL_COSTS="${PROBE_COUNTERFACTUAL_COSTS_OVERRIDE:-false}"
 
 MASK_ARGS=()
@@ -104,6 +105,7 @@ echo "COST_LIMIT=$COST_LIMIT"
 echo "PID_KP=$PID_KP"
 echo "PID_KI=$PID_KI"
 echo "PID_KD=$PID_KD"
+echo "PID_INTEGRAL_DECAY=$PID_INTEGRAL_DECAY"
 echo "PROBE_COUNTERFACTUAL_COSTS=$PROBE_COUNTERFACTUAL_COSTS"
 set +o pipefail
 nvidia-smi 2>&1 | head -20
@@ -161,6 +163,8 @@ assert "probe_counterfactual_costs" in src_train and "cost_action_minus_zero" in
     "real counterfactual cost probes missing from train.py"
 assert "cost_return_loss_weight" in src_train and "Qc-Jc=" in src_train, \
     "cost-return diagnostic/training path missing from train.py"
+assert "pid_integral_decay" in src_train and "Sdecay=" in src_train, \
+    "PID integral decay/release path missing from train.py"
 assert "cost_return" in src_replay and "cost_return_gamma" in src_replay, \
     "replay buffer does not expose discounted future cost returns"
 assert "goal_start=config.goal_start" in src_train and "_goal_from_obs" in src_replay, \
@@ -253,4 +257,5 @@ echo "===== TRAINING ====="
     --pid-ki "$PID_KI" \
     --pid-kd "$PID_KD" \
     --pid-integral-min -10.0 \
-    --pid-integral-max 10.0
+    --pid-integral-max 10.0 \
+    --pid-integral-decay "$PID_INTEGRAL_DECAY"

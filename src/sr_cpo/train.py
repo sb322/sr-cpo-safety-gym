@@ -93,6 +93,7 @@ class TrainConfig:
     pid_kd: float = 0.0
     pid_integral_min: float = -10.0
     pid_integral_max: float = 10.0
+    pid_integral_decay: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -596,6 +597,7 @@ def _sgd_step(
         kd=config.pid_kd,
         integral_min=config.pid_integral_min,
         integral_max=config.pid_integral_max,
+        integral_decay=config.pid_integral_decay,
     )
     pid_error = jc_hat - jnp.asarray(config.cost_limit, dtype=jnp.float32)
     pid_derivative = pid_error - train_state.pid_state.previous_error
@@ -668,6 +670,9 @@ def _sgd_step(
         "state_goal_masked": jnp.asarray(config.mask_goal_in_state, dtype=jnp.float32),
         "pid_error": pid_error,
         "pid_integral": pid_state.integral,
+        "pid_integral_decay": jnp.asarray(
+            config.pid_integral_decay, dtype=jnp.float32
+        ),
         "pid_raw_lambda": pid_raw_lambda.astype(jnp.float32),
         "lambda_tilde": pid_state.lambda_tilde,
         "c_grad_nan": c_grad_nan,
@@ -968,6 +973,7 @@ def format_epoch_metrics(
                 f"limit={_mean_float(metrics, 'cost_limit'):.2e} "
                 f"pid_err={_mean_float(metrics, 'pid_error'):.2e} "
                 f"S={_mean_float(metrics, 'pid_integral'):.2e} "
+                f"Sdecay={_mean_float(metrics, 'pid_integral_decay'):.2f} "
                 f"λraw={_mean_float(metrics, 'pid_raw_lambda'):.2e} "
                 f"Qc0={_mean_float(metrics, 'qc_zero_action_actor'):.4f} "
                 f"Qc-={_mean_float(metrics, 'qc_neg_action_actor'):.4f} "
