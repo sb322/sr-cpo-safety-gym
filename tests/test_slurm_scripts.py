@@ -389,6 +389,35 @@ def test_relxy_cmdp_sweep_reuses_reference_relative_xy_arm() -> None:
     assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
 
 
+def test_relxy_pid_pressure_sweep_tests_kp_with_decay() -> None:
+    source = Path("slurm/relxy_pid_pressure_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-5" in source
+    assert "safe_relxy_pid.%A_%a.out" in source
+    assert (
+        'PRESSURE_LABELS=(\n    "kp10_nuc3e-3"\n    "kp25_nuc3e-3"\n'
+        '    "kp50_nuc3e-3"\n    "kp10_nuc1e-2"\n'
+        '    "kp25_nuc1e-2"\n    "kp50_nuc1e-2"\n)'
+    ) in source
+    assert 'NU_C_VALUES=("0.003" "0.003" "0.003" "0.01" "0.01" "0.01")' in source
+    assert (
+        'PID_KP_VALUES=("10.0" "25.0" "50.0" "10.0" "25.0" "50.0")'
+        in source
+    )
+    assert (
+        'PID_INTEGRAL_DECAY_VALUES=("0.95" "0.95" "0.95" "0.95" "0.95" "0.95")'
+        in source
+    )
+    assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export COST_RETURN_LOSS_WEIGHT_OVERRIDE=1.0" in source
+    assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
+    assert "#SBATCH --gres=gpu:a100:1" in source
+    assert "#SBATCH --mem=16G" in source
+    assert "#SBATCH --time=00:30:00" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
