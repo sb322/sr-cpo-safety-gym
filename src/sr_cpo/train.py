@@ -70,6 +70,7 @@ class TrainConfig:
     goal_dim: int = 3
     mask_goal_in_state: bool = False
     mask_native_goal_lidar: bool = False
+    probe_counterfactual_costs: bool = False
     width: int = 64
     num_blocks: int = 2
     latent_dim: int = 32
@@ -298,6 +299,9 @@ def _collect_toy_trajectory(
         "goal_slice_std": jnp.std(rollout_goals),
         "goal_slice_min": jnp.min(rollout_goals),
         "goal_slice_max": jnp.max(rollout_goals),
+        "cost_zero_action": jnp.asarray(0.0, dtype=jnp.float32),
+        "cost_neg_action": jnp.asarray(0.0, dtype=jnp.float32),
+        "cost_action_minus_zero": jnp.asarray(0.0, dtype=jnp.float32),
     }
     next_state = train_state.replace(
         key=key,
@@ -361,6 +365,12 @@ def _collect_real_trajectory(
     _assert_goal_shape(
         rollout_goals, config.goal_dim, context="real actor rollout metrics"
     )
+    if config.probe_counterfactual_costs:
+        cost_zero_action = transitions.extras["cost_zero_action"]
+        cost_neg_action = transitions.extras["cost_neg_action"]
+    else:
+        cost_zero_action = jnp.zeros_like(transitions.extras["cost"])
+        cost_neg_action = jnp.zeros_like(transitions.extras["cost"])
     replay = _insert_vector_trajectories(
         train_state.replay,
         observations=observations,
@@ -381,6 +391,11 @@ def _collect_real_trajectory(
         "goal_slice_std": jnp.std(rollout_goals),
         "goal_slice_min": jnp.min(rollout_goals),
         "goal_slice_max": jnp.max(rollout_goals),
+        "cost_zero_action": jnp.mean(cost_zero_action),
+        "cost_neg_action": jnp.mean(cost_neg_action),
+        "cost_action_minus_zero": jnp.mean(
+            transitions.extras["cost"] - cost_zero_action
+        ),
     }
     next_state = train_state.replace(
         key=key,
@@ -717,6 +732,9 @@ def make_training_epoch(
         metrics["goal_slice_std"] = collect_metrics["goal_slice_std"]
         metrics["goal_slice_min"] = collect_metrics["goal_slice_min"]
         metrics["goal_slice_max"] = collect_metrics["goal_slice_max"]
+        metrics["cost_zero_action"] = collect_metrics["cost_zero_action"]
+        metrics["cost_neg_action"] = collect_metrics["cost_neg_action"]
+        metrics["cost_action_minus_zero"] = collect_metrics["cost_action_minus_zero"]
         return state, metrics
 
     @jax.jit
@@ -757,6 +775,7 @@ def initialize_training(
             episode_length=config.env_episode_length,
             goal_mode=config.goal_mode,
             mask_native_goal_lidar=config.mask_native_goal_lidar,
+            probe_counterfactual_costs=config.probe_counterfactual_costs,
         )
         env_state, reset_transition = env_adapter.reset(env_key)
         runtime_observation_dim = int(reset_transition.observation.shape[-1])
@@ -914,6 +933,9 @@ def format_epoch_metrics(
                 "         "
                 f"hard_viol={_mean_float(metrics, 'hard_viol'):.4f} "
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
+                f"cost0={_mean_float(metrics, 'cost_zero_action'):.4f} "
+                f"cost-={_mean_float(metrics, 'cost_neg_action'):.4f} "
+                f"cost-cost0={_mean_float(metrics, 'cost_action_minus_zero'):.4f} "
                 f"rew={_mean_float(metrics, 'rollout_reward'):.4f} "
                 f"gdist={_mean_float(metrics, 'goal_dist'):.4f} "
                 f"reached={_mean_float(metrics, 'goal_reached'):.4f} "

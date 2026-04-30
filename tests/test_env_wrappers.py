@@ -46,7 +46,10 @@ class FakeGoToGoal(Env):
     def step(self, state: State, action: jax.Array) -> State:
         padded_action = jnp.pad(action, (0, self.observation_size - self.action_size))
         obs = state.obs + padded_action.astype(jnp.float32)
-        cost = jnp.asarray(self.documented_step_cost, dtype=jnp.float32)
+        cost = jnp.asarray(
+            self.documented_step_cost + 0.1 * jnp.sum(jnp.abs(action)),
+            dtype=jnp.float32,
+        )
         info = dict(state.info)
         info["cost"] = cost
         info["last_goal_dist"] = jnp.asarray(0.5, dtype=jnp.float32)
@@ -107,6 +110,34 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert bool(jnp.allclose(transition.extras["cost"], fake_env.documented_step_cost))
     assert bool(jnp.allclose(transition.extras["goal_dist"], 0.5))
     assert bool(jnp.allclose(transition.extras["goal_reached"], 1.0))
+
+
+def test_safe_learning_go_to_goal_adapter_can_probe_counterfactual_costs() -> None:
+    num_envs = 8
+    fake_env = FakeGoToGoal()
+    adapter = SafeLearningGoToGoalAdapter(
+        env=fake_env,
+        num_envs=num_envs,
+        probe_counterfactual_costs=True,
+    )
+
+    state, _ = adapter.reset(jax.random.PRNGKey(0))
+    action = jnp.ones((num_envs, adapter.action_size), dtype=jnp.float32)
+    _, transition = adapter.step(state, action)
+
+    assert transition.extras["cost_zero_action"].shape == (num_envs,)
+    assert transition.extras["cost_neg_action"].shape == (num_envs,)
+    assert bool(
+        jnp.allclose(
+            transition.extras["cost_zero_action"], fake_env.documented_step_cost
+        )
+    )
+    assert bool(
+        jnp.all(transition.extras["cost"] > transition.extras["cost_zero_action"])
+    )
+    assert bool(
+        jnp.allclose(transition.extras["cost_neg_action"], transition.extras["cost"])
+    )
 
 
 def test_xy_goal_mode_uses_robot_and_target_xy_goal_space() -> None:

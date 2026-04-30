@@ -69,10 +69,16 @@ COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"
 PID_KP="${PID_KP_OVERRIDE:-5.0}"
 PID_KI="${PID_KI_OVERRIDE:-0.1}"
 PID_KD="${PID_KD_OVERRIDE:-0.0}"
+PROBE_COUNTERFACTUAL_COSTS="${PROBE_COUNTERFACTUAL_COSTS_OVERRIDE:-false}"
 
 MASK_ARGS=()
 if [ "$MASK_NATIVE_GOAL_LIDAR" = "true" ]; then
     MASK_ARGS+=(--mask-native-goal-lidar)
+fi
+
+COUNTERFACTUAL_ARGS=()
+if [ "$PROBE_COUNTERFACTUAL_COSTS" = "true" ]; then
+    COUNTERFACTUAL_ARGS+=(--probe-counterfactual-costs)
 fi
 
 echo "===== ENVIRONMENT ====="
@@ -96,6 +102,7 @@ echo "COST_LIMIT=$COST_LIMIT"
 echo "PID_KP=$PID_KP"
 echo "PID_KI=$PID_KI"
 echo "PID_KD=$PID_KD"
+echo "PROBE_COUNTERFACTUAL_COSTS=$PROBE_COUNTERFACTUAL_COSTS"
 set +o pipefail
 nvidia-smi 2>&1 | head -20
 set -o pipefail
@@ -148,6 +155,8 @@ assert "_state_observation" in src_env and "self.achieved_goal(state)" in src_en
     "state observation path does not append achieved robot XY"
 assert "desired_goal" in src_train and "transitions.extras[\"desired_goal\"]" in src_train, \
     "actor rollout metrics do not use adapter desired goals"
+assert "probe_counterfactual_costs" in src_train and "cost_action_minus_zero" in src_train, \
+    "real counterfactual cost probes missing from train.py"
 assert "goal_start=config.goal_start" in src_train and "_goal_from_obs" in src_replay, \
     "hindsight critic goals do not use configured future achieved-goal slice"
 assert "goal_mode_xy" in src_train and "gxy=" in src_train, \
@@ -216,6 +225,7 @@ echo "===== TRAINING ====="
     --goal-start "$GOAL_START" \
     --goal-dim "$GOAL_DIM" \
     "${MASK_ARGS[@]}" \
+    "${COUNTERFACTUAL_ARGS[@]}" \
     --width 256 \
     --num-blocks "$NUM_BLOCK" \
     --use-residual \

@@ -135,6 +135,7 @@ class SafeLearningGoToGoalAdapter:
         action_repeat: int = 1,
         goal_mode: str = _OBS_SLICE_GOAL_MODE,
         mask_native_goal_lidar: bool = False,
+        probe_counterfactual_costs: bool = False,
         **env_kwargs: Any,
     ) -> None:
         if goal_mode not in {_OBS_SLICE_GOAL_MODE, *_XY_GOAL_MODES}:
@@ -154,6 +155,7 @@ class SafeLearningGoToGoalAdapter:
         self.episode_length = episode_length
         self.goal_mode = goal_mode
         self.mask_native_goal_lidar = mask_native_goal_lidar
+        self.probe_counterfactual_costs = probe_counterfactual_costs
 
     @property
     def action_size(self) -> int:
@@ -242,11 +244,20 @@ class SafeLearningGoToGoalAdapter:
         reward = jnp.asarray(next_state.reward, dtype=jnp.float32)
         discount = 1.0 - jnp.asarray(next_state.done, dtype=jnp.float32)
         cost = _cost_from_info(next_state.info)
+        cost_zero_action = None
+        cost_neg_action = None
+        if self.probe_counterfactual_costs:
+            zero_next_state = self.env.step(state, jnp.zeros_like(action))
+            neg_next_state = self.env.step(state, -action)
+            cost_zero_action = _cost_from_info(zero_next_state.info)
+            cost_neg_action = _cost_from_info(neg_next_state.info)
         extras = self._extras(
             state_info=next_state.info,
             state_obs=obs,
             next_obs=next_obs,
             cost=cost,
+            cost_zero_action=cost_zero_action,
+            cost_neg_action=cost_neg_action,
             desired_goal=(
                 self.desired_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
@@ -268,6 +279,8 @@ class SafeLearningGoToGoalAdapter:
         state_obs: jax.Array,
         next_obs: jax.Array,
         cost: jax.Array,
+        cost_zero_action: jax.Array | None = None,
+        cost_neg_action: jax.Array | None = None,
         desired_goal: jax.Array | None = None,
         achieved_goal: jax.Array | None = None,
         next_achieved_goal: jax.Array | None = None,
@@ -302,6 +315,12 @@ class SafeLearningGoToGoalAdapter:
             extras["achieved_goal"] = achieved_goal
         if next_achieved_goal is not None:
             extras["next_achieved_goal"] = next_achieved_goal
+        if cost_zero_action is not None:
+            extras["cost_zero_action"] = jnp.asarray(
+                cost_zero_action, dtype=jnp.float32
+            )
+        if cost_neg_action is not None:
+            extras["cost_neg_action"] = jnp.asarray(cost_neg_action, dtype=jnp.float32)
         return extras
 
 
@@ -311,6 +330,7 @@ def make_safe_learning_go_to_goal(
     episode_length: int = 1000,
     goal_mode: str = _OBS_SLICE_GOAL_MODE,
     mask_native_goal_lidar: bool = False,
+    probe_counterfactual_costs: bool = False,
     **env_kwargs: Any,
 ) -> SafeLearningGoToGoalAdapter:
     """Creates the vectorized safe-learning GoToGoal adapter."""
@@ -320,5 +340,6 @@ def make_safe_learning_go_to_goal(
         episode_length=episode_length,
         goal_mode=goal_mode,
         mask_native_goal_lidar=mask_native_goal_lidar,
+        probe_counterfactual_costs=probe_counterfactual_costs,
         **env_kwargs,
     )

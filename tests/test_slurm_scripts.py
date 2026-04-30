@@ -333,6 +333,11 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert 'PID_KP="${PID_KP_OVERRIDE:-5.0}"' in source
     assert 'PID_KI="${PID_KI_OVERRIDE:-0.1}"' in source
     assert 'PID_KD="${PID_KD_OVERRIDE:-0.0}"' in source
+    assert (
+        'PROBE_COUNTERFACTUAL_COSTS="${PROBE_COUNTERFACTUAL_COSTS_OVERRIDE:-false}"'
+        in source
+    )
+    assert "--probe-counterfactual-costs" in source
     assert "--use-residual" in source
     assert '--goal-mode "$GOAL_MODE"' in source
     assert '--goal-start "$GOAL_START"' in source
@@ -363,6 +368,10 @@ def test_relxy_cmdp_sweep_reuses_reference_relative_xy_arm() -> None:
     assert "export SGD_STEPS_OVERRIDE=64" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source
+    assert "#SBATCH --gres=gpu:a100:1" in source
+    assert "#SBATCH --mem=16G" in source
+    assert "#SBATCH --time=00:30:00" in source
+    assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
 
 
 def test_production_launchers_use_calibrated_cost_limit() -> None:

@@ -8,9 +8,9 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:a100_40g:1
-#SBATCH --mem=32G
-#SBATCH --time=02:00:00
+#SBATCH --gres=gpu:a100:1
+#SBATCH --mem=16G
+#SBATCH --time=00:30:00
 #SBATCH --array=0-3
 
 set -euo pipefail
@@ -36,6 +36,7 @@ echo "NU_C_OVERRIDE=${NU_C_VALUES[$TASK_ID]}"
 echo "PID_KP_OVERRIDE=${PID_KP_VALUES[$TASK_ID]}"
 echo "PID_KI_OVERRIDE=${PID_KI_VALUES[$TASK_ID]}"
 echo "PID_KD_OVERRIDE=${PID_KD_VALUES[$TASK_ID]}"
+echo "PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true"
 echo ""
 
 export SGD_STEPS_OVERRIDE=64
@@ -43,6 +44,7 @@ export NU_C_OVERRIDE="${NU_C_VALUES[$TASK_ID]}"
 export PID_KP_OVERRIDE="${PID_KP_VALUES[$TASK_ID]}"
 export PID_KI_OVERRIDE="${PID_KI_VALUES[$TASK_ID]}"
 export PID_KD_OVERRIDE="${PID_KD_VALUES[$TASK_ID]}"
+export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true
 export SLURM_ARRAY_TASK_ID=3
 
 bash slurm/relative_xy_sweep.sh

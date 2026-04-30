@@ -257,6 +257,9 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "a_loss": jnp.asarray([-1.0]),
         "hard_viol": jnp.asarray([0.0]),
         "cost": jnp.asarray([0.0]),
+        "cost_zero_action": jnp.asarray([0.1]),
+        "cost_neg_action": jnp.asarray([0.2]),
+        "cost_action_minus_zero": jnp.asarray([-0.1]),
         "rollout_reward": jnp.asarray([-1.2345]),
         "goal_dist": jnp.asarray([0.42]),
         "goal_reached": jnp.asarray([0.25]),
@@ -324,6 +327,8 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "grad[c=0/" in text
     assert "actor[α=1.0000" in text
     assert "rew=-1.2345" in text
+    assert "cost0=0.1000" in text
+    assert "cost-cost0=-0.1000" in text
     assert "gdist=0.4200" in text
     assert "reached=0.2500" in text
     assert "gstart=16" in text
