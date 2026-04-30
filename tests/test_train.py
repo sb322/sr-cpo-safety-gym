@@ -277,6 +277,10 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "lambda_tilde": jnp.asarray([0.0]),
         "jc_hat": jnp.asarray([0.0]),
         "qc": jnp.asarray([0.0]),
+        "td_target": jnp.asarray([0.25]),
+        "cost_return": jnp.asarray([0.75]),
+        "qc_return_error": jnp.asarray([-0.75]),
+        "cost_return_loss_weight": jnp.asarray([1.0]),
         "cost_limit": jnp.asarray([0.0001]),
         "pid_error": jnp.asarray([-0.0001]),
         "pid_integral": jnp.asarray([-0.001]),
@@ -346,5 +350,9 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "pid_err=-1.00e-04" in text
     assert "S=-1.00e-03" in text
     assert "λraw=-1.00e-03" in text
+    assert "TD=0.2500" in text
+    assert "Jc_mc=0.7500" in text
+    assert "Qc-Jc=-0.7500" in text
+    assert "mcw=1.0e+00" in text
     assert "λQc_a=1.25e-01" in text
     assert "nu_c=1.0e-02" in text

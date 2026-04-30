@@ -270,6 +270,7 @@ def cost_critic_loss_fn(
     actor: Any,
     cost_critic: Any,
     gamma_c: float = 0.99,
+    cost_return_loss_weight: float = 0.0,
     goal: Array | None = None,
 ) -> tuple[Array, dict[str, Array]]:
     """TD(0) cost-critic loss with Bellman-B c(s_{t+1}) targets."""
@@ -288,12 +289,23 @@ def cost_critic_loss_fn(
     )
     target = jax.lax.stop_gradient(cost + gamma_c * discount * qc_target)
     qc_online = cost_critic.apply(cost_critic_params, state, action, goal_arr)
-    loss = 0.5 * jnp.mean(jnp.square(qc_online - target))
+    td_loss = 0.5 * jnp.mean(jnp.square(qc_online - target))
+    if "cost_return" in extras:
+        cost_return = jnp.asarray(extras["cost_return"], dtype=jnp.float32)
+    else:
+        cost_return = target
+    cost_return = jax.lax.stop_gradient(cost_return)
+    return_loss = 0.5 * jnp.mean(jnp.square(qc_online - cost_return))
+    loss = td_loss + cost_return_loss_weight * return_loss
     probes = {
         "cost_critic_loss": loss,
+        "cost_critic_td_loss": td_loss,
+        "cost_return_loss": return_loss,
         "mean_cost": jnp.mean(cost),
         "mean_qc": jnp.mean(qc_online),
         "mean_target": jnp.mean(target),
+        "mean_cost_return": jnp.mean(cost_return),
+        "qc_return_error": jnp.mean(qc_online - cost_return),
     }
     return loss, probes
 

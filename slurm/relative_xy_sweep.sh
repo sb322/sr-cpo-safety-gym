@@ -65,6 +65,7 @@ SEED="0"
 SGD_STEPS="${SGD_STEPS_OVERRIDE:-4}"
 NU_C="${NU_C_OVERRIDE:-0.0003}"
 ENTROPY_PARAM="${ENTROPY_PARAM_OVERRIDE:-0.5}"
+COST_RETURN_LOSS_WEIGHT="${COST_RETURN_LOSS_WEIGHT_OVERRIDE:-0.0}"
 COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"
 PID_KP="${PID_KP_OVERRIDE:-5.0}"
 PID_KI="${PID_KI_OVERRIDE:-0.1}"
@@ -97,6 +98,7 @@ echo "GOAL_START=$GOAL_START"
 echo "GOAL_DIM=$GOAL_DIM"
 echo "NU_C=$NU_C"
 echo "ENTROPY_PARAM=$ENTROPY_PARAM"
+echo "COST_RETURN_LOSS_WEIGHT=$COST_RETURN_LOSS_WEIGHT"
 echo "SEED=$SEED"
 echo "COST_LIMIT=$COST_LIMIT"
 echo "PID_KP=$PID_KP"
@@ -157,6 +159,10 @@ assert "desired_goal" in src_train and "transitions.extras[\"desired_goal\"]" in
     "actor rollout metrics do not use adapter desired goals"
 assert "probe_counterfactual_costs" in src_train and "cost_action_minus_zero" in src_train, \
     "real counterfactual cost probes missing from train.py"
+assert "cost_return_loss_weight" in src_train and "Qc-Jc=" in src_train, \
+    "cost-return diagnostic/training path missing from train.py"
+assert "cost_return" in src_replay and "cost_return_gamma" in src_replay, \
+    "replay buffer does not expose discounted future cost returns"
 assert "goal_start=config.goal_start" in src_train and "_goal_from_obs" in src_replay, \
     "hindsight critic goals do not use configured future achieved-goal slice"
 assert "goal_mode_xy" in src_train and "gxy=" in src_train, \
@@ -240,6 +246,7 @@ echo "===== TRAINING ====="
     --nu-f 1.0 \
     --nu-c "$NU_C" \
     --entropy-param "$ENTROPY_PARAM" \
+    --cost-return-loss-weight "$COST_RETURN_LOSS_WEIGHT" \
     --alpha-max 1.0 \
     --cost-limit "$COST_LIMIT" \
     --pid-kp "$PID_KP" \

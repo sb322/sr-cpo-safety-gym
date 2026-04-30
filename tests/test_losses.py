@@ -351,8 +351,48 @@ def test_cost_critic_loss_forward_and_grad_finite() -> None:
 
     assert loss.shape == ()
     assert bool(jnp.isfinite(loss))
+    assert "cost_critic_td_loss" in probes
+    assert "cost_return_loss" in probes
+    assert "mean_cost_return" in probes
+    assert "qc_return_error" in probes
     _assert_finite_tree(probes)
     _assert_finite_tree(grads)
+
+
+def test_cost_critic_loss_can_use_cost_return_auxiliary_target() -> None:
+    (
+        actor_params,
+        _,
+        cost_critic_params,
+        transition,
+        actor,
+        _,
+        _,
+        cost_critic,
+    ) = _actor_setup()
+    transition = transition.replace(
+        extras={
+            **transition.extras,
+            "cost_return": jnp.asarray([0.5, 0.25, 0.0, 1.0], dtype=jnp.float32),
+        }
+    )
+
+    loss, probes = cost_critic_loss_fn(
+        cost_critic_params,
+        cost_critic_params,
+        actor_params,
+        transition,
+        jax.random.PRNGKey(11),
+        actor=actor,
+        cost_critic=cost_critic,
+        gamma_c=0.99,
+        cost_return_loss_weight=1.0,
+    )
+
+    assert loss.shape == ()
+    assert bool(jnp.isfinite(loss))
+    assert bool(jnp.isfinite(probes["cost_return_loss"]))
+    assert bool(jnp.allclose(probes["mean_cost_return"], 0.4375))
 
 
 def test_alpha_loss_forward_and_grad_finite() -> None:

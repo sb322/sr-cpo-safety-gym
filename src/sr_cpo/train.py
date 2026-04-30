@@ -81,6 +81,7 @@ class TrainConfig:
     rho: float = 0.1
     critic_score_mode: str = "cosine"
     gamma_c: float = 0.99
+    cost_return_loss_weight: float = 0.0
     target_update_rate: float = 0.005
     nu_f: float = 1.0
     nu_c: float = 1.0
@@ -472,6 +473,7 @@ def _sgd_step(
         goal_start=config.goal_start,
         goal_end=config.goal_start + config.goal_dim,
         relative_goal=config.goal_mode == "relative_xy",
+        cost_return_gamma=config.gamma_c,
     )
     _assert_goal_shape(
         batch.extras["goal"], config.goal_dim, context="hindsight critic"
@@ -534,6 +536,7 @@ def _sgd_step(
             actor=objects.actor,
             cost_critic=objects.cost_critic,
             gamma_c=config.gamma_c,
+            cost_return_loss_weight=config.cost_return_loss_weight,
         )
 
     (cc_loss, cc_aux), cc_grads = jax.value_and_grad(
@@ -613,6 +616,8 @@ def _sgd_step(
         "c_accuracy": c_aux["accuracy"],
         "a_loss": a_loss,
         "cc_loss": cc_loss,
+        "cc_td_loss": cc_aux["cost_critic_td_loss"],
+        "cc_return_loss": cc_aux["cost_return_loss"],
         "alpha_loss": alpha_loss,
         "nan_obs_critic": c_aux["nan_obs"],
         "nan_sa_critic": c_aux["nan_sa"],
@@ -651,6 +656,12 @@ def _sgd_step(
         "alpha_clip": jnp.minimum(jnp.exp(log_alpha) / config.alpha_max, 1.0),
         "cost": cc_aux["mean_cost"],
         "qc": cc_aux["mean_qc"],
+        "td_target": cc_aux["mean_target"],
+        "cost_return": cc_aux["mean_cost_return"],
+        "qc_return_error": cc_aux["qc_return_error"],
+        "cost_return_loss_weight": jnp.asarray(
+            config.cost_return_loss_weight, dtype=jnp.float32
+        ),
         "jc_hat": jc_hat,
         "dual_qc_mean": dual_aux["dual_qc_mean"],
         "cost_limit": jnp.asarray(config.cost_limit, dtype=jnp.float32),
@@ -953,12 +964,16 @@ def format_epoch_metrics(
                 f"λ̃={_mean_float(metrics, 'lambda_tilde'):.4f} "
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
                 f"Qc={_mean_float(metrics, 'qc'):.4f} "
+                f"TD={_mean_float(metrics, 'td_target'):.4f} "
                 f"limit={_mean_float(metrics, 'cost_limit'):.2e} "
                 f"pid_err={_mean_float(metrics, 'pid_error'):.2e} "
                 f"S={_mean_float(metrics, 'pid_integral'):.2e} "
                 f"λraw={_mean_float(metrics, 'pid_raw_lambda'):.2e} "
                 f"Qc0={_mean_float(metrics, 'qc_zero_action_actor'):.4f} "
                 f"Qc-={_mean_float(metrics, 'qc_neg_action_actor'):.4f} "
+                f"Jc_mc={_mean_float(metrics, 'cost_return'):.4f} "
+                f"Qc-Jc={_mean_float(metrics, 'qc_return_error'):.4f} "
+                f"mcw={_mean_float(metrics, 'cost_return_loss_weight'):.1e} "
                 f"ΔQc_a0={_mean_float(metrics, 'qc_action_gap_actor'):.2e} "
                 f"Qcstd={_mean_float(metrics, 'qc_actor_std'):.2e} "
                 f"λQc_a={_mean_float(metrics, 'lambda_qc_actor'):.2e} "

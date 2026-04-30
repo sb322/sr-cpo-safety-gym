@@ -64,6 +64,8 @@ def test_hindsight_sample_uses_configured_future_goal_slice() -> None:
         jnp.allclose(batch.extras["goal"], batch.extras["future_state"][:, 1:3])
     )
     assert bool(jnp.all(jnp.isfinite(batch.extras["cost"])))
+    assert batch.extras["cost_return"].shape == (8,)
+    assert bool(jnp.all(jnp.isfinite(batch.extras["cost_return"])))
 
 
 def test_hindsight_sample_can_use_relative_future_goal_slice() -> None:
@@ -87,3 +89,34 @@ def test_hindsight_sample_can_use_relative_future_goal_slice() -> None:
     expected = batch.extras["future_state"][:, 1:3] - batch.observation[:, 1:3]
     assert batch.extras["goal"].shape == (8, 2)
     assert bool(jnp.allclose(batch.extras["goal"], expected))
+
+
+def test_hindsight_sample_exposes_discounted_cost_return() -> None:
+    buffer = make_replay_buffer(
+        capacity=1, episode_length=4, observation_dim=3, action_dim=2
+    )
+    buffer = insert_trajectory(
+        buffer, **dict(zip(TRAJECTORY_KEYS, _trajectory(0.0), strict=True))
+    )
+
+    batch = sample_hindsight_transitions(
+        buffer,
+        jax.random.PRNGKey(2),
+        batch_size=8,
+        goal_start=1,
+        goal_end=3,
+        cost_return_gamma=0.5,
+    )
+
+    costs = buffer.costs[batch.extras["trajectory_index"]]
+    expected_returns = []
+    for sample_idx, step_idx in enumerate(batch.extras["step_index"]):
+        ret = 0.0
+        weight = 1.0
+        for cost in costs[sample_idx, int(step_idx) :]:
+            ret += weight * float(cost)
+            weight *= 0.5
+        expected_returns.append(ret)
+
+    expected = jnp.asarray(expected_returns, dtype=jnp.float32)
+    assert bool(jnp.allclose(batch.extras["cost_return"], expected))

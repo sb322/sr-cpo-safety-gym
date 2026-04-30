@@ -90,6 +90,31 @@ def insert_trajectory(
     )
 
 
+def _discounted_cost_returns(
+    costs: jax.Array,
+    discounts: jax.Array,
+    gamma: float,
+) -> jax.Array:
+    costs_t = jnp.swapaxes(jnp.asarray(costs, dtype=jnp.float32), 0, 1)
+    discounts_t = jnp.swapaxes(jnp.asarray(discounts, dtype=jnp.float32), 0, 1)
+    gamma_arr = jnp.asarray(gamma, dtype=jnp.float32)
+
+    def scan_step(
+        carry: jax.Array,
+        inputs: tuple[jax.Array, jax.Array],
+    ) -> tuple[jax.Array, jax.Array]:
+        cost_t, discount_t = inputs
+        ret_t = cost_t + gamma_arr * discount_t * carry
+        return ret_t, ret_t
+
+    _, returns_rev = jax.lax.scan(
+        scan_step,
+        jnp.zeros((costs_t.shape[1],), dtype=jnp.float32),
+        (costs_t[::-1], discounts_t[::-1]),
+    )
+    return jnp.swapaxes(returns_rev[::-1], 0, 1)
+
+
 def sample_hindsight_transitions(
     buffer: ReplayBuffer,
     key: jax.Array,
@@ -98,6 +123,7 @@ def sample_hindsight_transitions(
     goal_start: int = 0,
     goal_end: int | None = None,
     relative_goal: bool = False,
+    cost_return_gamma: float = 0.99,
 ) -> Transition:
     """Uniformly samples transitions and relabels goals from future states."""
 
@@ -121,6 +147,12 @@ def sample_hindsight_transitions(
     reward = buffer.rewards[traj_idx, step_idx]
     discount = buffer.discounts[traj_idx, step_idx]
     cost = buffer.costs[traj_idx, step_idx]
+    selected_costs = buffer.costs[traj_idx]
+    selected_discounts = buffer.discounts[traj_idx]
+    cost_returns = _discounted_cost_returns(
+        selected_costs, selected_discounts, cost_return_gamma
+    )
+    cost_return = cost_returns[jnp.arange(batch_size), step_idx]
     d_wall = buffer.d_wall[traj_idx, step_idx]
     hard = buffer.hard_violations[traj_idx, step_idx]
 
@@ -134,6 +166,7 @@ def sample_hindsight_transitions(
             "future_state": future_state,
             "next_state": next_obs,
             "cost": cost,
+            "cost_return": cost_return,
             "d_wall": d_wall,
             "hard_violation": hard,
             "trajectory_index": traj_idx,
