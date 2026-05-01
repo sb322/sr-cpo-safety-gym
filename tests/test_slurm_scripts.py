@@ -532,6 +532,40 @@ def test_relxy_long_3seed_runs_overnight_baseline_and_cmdp_candidates() -> None:
     assert "bash slurm/relative_xy_sweep.sh" in source
 
 
+def test_relxy_200epoch_3seed_extends_best_comparison() -> None:
+    source = Path("slurm/relxy_200epoch_3seed.sh").read_text()
+
+    assert "#SBATCH --array=0-5" in source
+    assert "#SBATCH --time=02:30:00" in source
+    assert "#SBATCH --gres=gpu:a100_40g:1" in source
+    assert "#SBATCH --mem=32G" in source
+    assert "safe_relxy_200.%A_%a.out" in source
+    assert (
+        'RUN200_LABELS=(\n    "pid_off_200_seed0"\n'
+        '    "pid_off_200_seed1"\n    "pid_off_200_seed2"\n'
+        '    "cmdp_nuc3e-3_200_seed0"\n'
+        '    "cmdp_nuc3e-3_200_seed1"\n'
+        '    "cmdp_nuc3e-3_200_seed2"\n)'
+    ) in source
+    assert 'SEED_VALUES=("0" "1" "2" "0" "1" "2")' in source
+    assert (
+        'NU_C_VALUES=("0.0003" "0.0003" "0.0003" "0.003" '
+        '"0.003" "0.003")'
+    ) in source
+    assert 'PID_KP_VALUES=("0.0" "0.0" "0.0" "5.0" "5.0" "5.0")' in source
+    assert 'PID_KI_VALUES=("0.0" "0.0" "0.0" "0.01" "0.01" "0.01")' in source
+    assert (
+        'COST_RETURN_LOSS_WEIGHT_VALUES=("0.0" "0.0" "0.0" "1.0" '
+        '"1.0" "1.0")'
+    ) in source
+    assert "export EPOCHS_OVERRIDE=200" in source
+    assert "export STEPS_PER_EPOCH_OVERRIDE=7" in source
+    assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
+
+
 def test_production_launchers_use_calibrated_cost_limit() -> None:
     for script in ("slurm/smoke.sh", "slurm/full.sh"):
         source = Path(script).read_text()
