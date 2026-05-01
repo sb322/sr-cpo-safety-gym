@@ -76,6 +76,8 @@ def test_safe_learning_go_to_goal_adapter_reset_uses_info_cost() -> None:
     assert bool(jnp.allclose(reset_transition.extras["cost"], state.info["cost"]))
     assert bool(jnp.allclose(reset_transition.extras["cost"], 0.0))
     assert bool(jnp.allclose(reset_transition.extras["hazard_violation"], 0.0))
+    assert bool(jnp.allclose(reset_transition.extras["vase_contact"], 0.0))
+    assert bool(jnp.allclose(reset_transition.extras["contact_valid"], 0.0))
     assert bool(jnp.allclose(reset_transition.extras["vase_displaced"], 0.0))
     assert bool(jnp.allclose(reset_transition.extras["vase_displacement_valid"], 1.0))
     assert bool(jnp.allclose(reset_transition.extras["cost_residual_violation"], 0.0))
@@ -100,6 +102,10 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert transition.extras["next_state"].shape == (num_envs, 5)
     assert transition.extras["hard_violation"].shape == (num_envs,)
     assert transition.extras["hazard_violation"].shape == (num_envs,)
+    assert transition.extras["robot_vase_contact"].shape == (num_envs,)
+    assert transition.extras["point_vase_contact"].shape == (num_envs,)
+    assert transition.extras["vase_contact"].shape == (num_envs,)
+    assert transition.extras["contact_valid"].shape == (num_envs,)
     assert transition.extras["vase_displaced"].shape == (num_envs,)
     assert transition.extras["vase_displacement_valid"].shape == (num_envs,)
     assert transition.extras["cost_residual_violation"].shape == (num_envs,)
@@ -120,6 +126,8 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert bool(jnp.allclose(transition.extras["cost"], next_state.info["cost"]))
     assert bool(jnp.allclose(transition.extras["cost"], fake_env.documented_step_cost))
     assert bool(jnp.allclose(transition.extras["hazard_violation"], 0.0))
+    assert bool(jnp.allclose(transition.extras["vase_contact"], 0.0))
+    assert bool(jnp.allclose(transition.extras["contact_valid"], 0.0))
     assert bool(jnp.allclose(transition.extras["vase_displaced"], 0.0))
     assert bool(jnp.allclose(transition.extras["vase_displacement_valid"], 1.0))
     assert bool(jnp.allclose(transition.extras["cost_residual_violation"], 1.0))
@@ -162,6 +170,7 @@ def test_safety_components_explain_hazard_and_vase_displacement() -> None:
         _robot_body_id=0,
         _hazard_body_ids=[1, 2],
         _vase_body_ids=[3],
+        _collision_obstacle_geoms_ids=[],
         _vases_qpos_ids=[jnp.asarray([0, 1, 2], dtype=jnp.int32)],
         _init_q=jnp.asarray([0.0, 0.0, 0.0], dtype=jnp.float32),
     )
@@ -217,6 +226,7 @@ def test_safety_components_disable_overexplaining_vase_probe() -> None:
         _robot_body_id=0,
         _hazard_body_ids=[],
         _vase_body_ids=[1],
+        _collision_obstacle_geoms_ids=[],
         _vases_qpos_ids=[jnp.asarray([0, 1, 2], dtype=jnp.int32)],
         _init_q=jnp.asarray([0.0, 0.0, 0.0], dtype=jnp.float32),
     )
@@ -236,6 +246,57 @@ def test_safety_components_disable_overexplaining_vase_probe() -> None:
             jnp.asarray([1.0, 0.0], dtype=jnp.float32),
         )
     )
+
+
+def test_safety_components_explain_exact_vase_contacts() -> None:
+    adapter = object.__new__(SafeLearningGoToGoalAdapter)
+    adapter.base_env = SimpleNamespace(
+        _robot_body_id=0,
+        _hazard_body_ids=[],
+        _vase_body_ids=[],
+        _robot_geom_id=10,
+        _pointarrow_geom_id=11,
+        _collision_obstacle_geoms_ids=[30, 31],
+    )
+    contact_geom = jnp.asarray(
+        [
+            [[10, 30], [11, 31], [5, 6]],
+            [[30, 10], [31, 11], [5, 6]],
+        ],
+        dtype=jnp.int32,
+    )
+    contact_dist = jnp.asarray(
+        [
+            [-0.1, 0.2, -0.5],
+            [0.2, -0.3, -0.5],
+        ],
+        dtype=jnp.float32,
+    )
+    data = SimpleNamespace(
+        xpos=jnp.zeros((2, 1, 3), dtype=jnp.float32),
+        contact=SimpleNamespace(geom=contact_geom, dist=contact_dist),
+    )
+    state = SimpleNamespace(data=data)
+
+    components = adapter._safety_components(
+        state, jnp.asarray([1.0, 1.0], dtype=jnp.float32)
+    )
+
+    assert bool(
+        jnp.allclose(
+            components["robot_vase_contact"],
+            jnp.asarray([1.0, 0.0], dtype=jnp.float32),
+        )
+    )
+    assert bool(
+        jnp.allclose(
+            components["point_vase_contact"],
+            jnp.asarray([0.0, 1.0], dtype=jnp.float32),
+        )
+    )
+    assert bool(jnp.allclose(components["vase_contact"], 1.0))
+    assert bool(jnp.allclose(components["contact_valid"], 1.0))
+    assert bool(jnp.allclose(components["cost_residual_violation"], 0.0))
 
 
 def test_xy_goal_mode_uses_robot_and_target_xy_goal_space() -> None:

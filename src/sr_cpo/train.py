@@ -219,6 +219,10 @@ def _toy_step(
             "next_state": next_obs,
             "cost": cost.astype(jnp.float32),
             "hazard_violation": (dist_to_hazard <= 0.20).astype(jnp.float32),
+            "robot_vase_contact": jnp.zeros_like(cost, dtype=jnp.float32),
+            "point_vase_contact": jnp.zeros_like(cost, dtype=jnp.float32),
+            "vase_contact": jnp.zeros_like(cost, dtype=jnp.float32),
+            "contact_valid": jnp.zeros_like(cost, dtype=jnp.float32),
             "vase_displaced": jnp.zeros_like(cost, dtype=jnp.float32),
             "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
             "cost_residual_violation": jnp.zeros_like(cost, dtype=jnp.float32),
@@ -310,6 +314,18 @@ def _collect_toy_trajectory(
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
         "hazard_viol": _mean_transition_extra(
             transitions.extras, "hazard_violation", transitions.extras["cost"]
+        ),
+        "robot_vase_contact": _mean_transition_extra(
+            transitions.extras, "robot_vase_contact", transitions.extras["cost"]
+        ),
+        "point_vase_contact": _mean_transition_extra(
+            transitions.extras, "point_vase_contact", transitions.extras["cost"]
+        ),
+        "vase_contact": _mean_transition_extra(
+            transitions.extras, "vase_contact", transitions.extras["cost"]
+        ),
+        "contact_valid": _mean_transition_extra(
+            transitions.extras, "contact_valid", transitions.extras["cost"]
         ),
         "vase_displaced": _mean_transition_extra(
             transitions.extras, "vase_displaced", transitions.extras["cost"]
@@ -423,6 +439,18 @@ def _collect_real_trajectory(
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
         "hazard_viol": _mean_transition_extra(
             transitions.extras, "hazard_violation", transitions.extras["cost"]
+        ),
+        "robot_vase_contact": _mean_transition_extra(
+            transitions.extras, "robot_vase_contact", transitions.extras["cost"]
+        ),
+        "point_vase_contact": _mean_transition_extra(
+            transitions.extras, "point_vase_contact", transitions.extras["cost"]
+        ),
+        "vase_contact": _mean_transition_extra(
+            transitions.extras, "vase_contact", transitions.extras["cost"]
+        ),
+        "contact_valid": _mean_transition_extra(
+            transitions.extras, "contact_valid", transitions.extras["cost"]
         ),
         "vase_displaced": _mean_transition_extra(
             transitions.extras, "vase_displaced", transitions.extras["cost"]
@@ -784,6 +812,10 @@ def make_training_epoch(
         metrics["rollout_cost"] = collect_metrics["cost"]
         metrics["rollout_reward"] = collect_metrics["reward"]
         metrics["hazard_viol"] = collect_metrics["hazard_viol"]
+        metrics["robot_vase_contact"] = collect_metrics["robot_vase_contact"]
+        metrics["point_vase_contact"] = collect_metrics["point_vase_contact"]
+        metrics["vase_contact"] = collect_metrics["vase_contact"]
+        metrics["contact_valid"] = collect_metrics["contact_valid"]
         metrics["vase_displaced"] = collect_metrics["vase_displaced"]
         metrics["vase_disp_valid"] = collect_metrics["vase_disp_valid"]
         metrics["cost_residual_viol"] = collect_metrics["cost_residual_viol"]
@@ -1012,6 +1044,10 @@ def format_epoch_metrics(
                 f"hard_viol={_mean_float(metrics, 'hard_viol'):.4f} "
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
                 f"hazard={_mean_float(metrics, 'hazard_viol'):.4f} "
+                f"vase_contact={_mean_float(metrics, 'vase_contact'):.4f} "
+                f"robot_vase={_mean_float(metrics, 'robot_vase_contact'):.4f} "
+                f"point_vase={_mean_float(metrics, 'point_vase_contact'):.4f} "
+                f"contact_valid={_mean_float(metrics, 'contact_valid'):.0f} "
                 f"vase_disp={_mean_float(metrics, 'vase_displaced'):.4f} "
                 f"vase_valid={_mean_float(metrics, 'vase_disp_valid'):.0f} "
                 f"cost_resid={_mean_float(metrics, 'cost_residual_viol'):.4f} "

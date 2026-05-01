@@ -373,10 +373,18 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "score_l2=" in source
     assert '--entropy-param "$ENTROPY_PARAM"' in source
     assert "hazard_violation" in source
+    assert "robot_vase_contact" in source
+    assert "point_vase_contact" in source
+    assert "vase_contact" in source
+    assert "contact_valid" in source
     assert "vase_displaced" in source
     assert "vase_displacement_valid" in source
     assert "cost_residual_violation" in source
     assert "hazard=" in source
+    assert "robot_vase=" in source
+    assert "point_vase=" in source
+    assert "vase_contact=" in source
+    assert "contact_valid=" in source
     assert "vase_disp=" in source
     assert "vase_valid=" in source
     assert "cost_resid=" in source

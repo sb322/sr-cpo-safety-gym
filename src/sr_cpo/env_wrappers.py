@@ -286,6 +286,10 @@ class SafeLearningGoToGoalAdapter:
         if data is None or not hasattr(data, "xpos"):
             return {
                 "hazard_violation": zeros,
+                "robot_vase_contact": zeros,
+                "point_vase_contact": zeros,
+                "vase_contact": zeros,
+                "contact_valid": zeros,
                 "vase_displaced": zeros,
                 "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
                 "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
@@ -298,6 +302,10 @@ class SafeLearningGoToGoalAdapter:
         if not hasattr(base_env, "_robot_body_id"):
             return {
                 "hazard_violation": zeros,
+                "robot_vase_contact": zeros,
+                "point_vase_contact": zeros,
+                "vase_contact": zeros,
+                "contact_valid": zeros,
                 "vase_displaced": zeros,
                 "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
                 "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
@@ -331,6 +339,31 @@ class SafeLearningGoToGoalAdapter:
             vase_xy = xpos[..., jnp.asarray(vase_ids, dtype=jnp.int32), :2]
             vase_dist = jnp.linalg.norm(vase_xy - robot_xy[..., None, :], axis=-1)
             min_vase_dist = jnp.min(vase_dist, axis=-1).astype(jnp.float32)
+
+        contact_valid = zeros
+        robot_vase_contact = zeros
+        point_vase_contact = zeros
+        vase_geom_ids = tuple(getattr(base_env, "_collision_obstacle_geoms_ids", ()))
+        if (
+            len(vase_geom_ids) > 0
+            and hasattr(data, "contact")
+            and hasattr(base_env, "_robot_geom_id")
+            and hasattr(base_env, "_pointarrow_geom_id")
+        ):
+            robot_vase_contact = self._any_contact_collision(
+                data.contact,
+                int(base_env._robot_geom_id),
+                vase_geom_ids,
+                cost,
+            )
+            point_vase_contact = self._any_contact_collision(
+                data.contact,
+                int(base_env._pointarrow_geom_id),
+                vase_geom_ids,
+                cost,
+            )
+            contact_valid = jnp.ones_like(cost, dtype=jnp.float32)
+        vase_contact = jnp.maximum(robot_vase_contact, point_vase_contact)
 
         raw_vase_displaced = zeros
         qpos_ids = tuple(getattr(base_env, "_vases_qpos_ids", ()))
@@ -366,10 +399,16 @@ class SafeLearningGoToGoalAdapter:
         else:
             min_obstacle_dist = missing_dist
 
-        explained = jnp.maximum(hazard_violation, vase_displaced)
+        explained = jnp.maximum(
+            jnp.maximum(hazard_violation, vase_displaced), vase_contact
+        )
         cost_residual = jnp.maximum(hard_violation - explained, 0.0)
         return {
             "hazard_violation": hazard_violation,
+            "robot_vase_contact": robot_vase_contact,
+            "point_vase_contact": point_vase_contact,
+            "vase_contact": vase_contact,
+            "contact_valid": contact_valid,
             "vase_displaced": vase_displaced,
             "vase_displacement_valid": vase_displacement_valid,
             "cost_residual_violation": cost_residual,
@@ -377,6 +416,37 @@ class SafeLearningGoToGoalAdapter:
             "min_vase_dist": min_vase_dist,
             "min_obstacle_dist": min_obstacle_dist.astype(jnp.float32),
         }
+
+    @staticmethod
+    def _any_contact_collision(
+        contact: Any,
+        source_geom: int,
+        target_geoms: tuple[Any, ...],
+        reference: jax.Array,
+    ) -> jax.Array:
+        if not hasattr(contact, "geom") or not hasattr(contact, "dist"):
+            return jnp.zeros_like(reference, dtype=jnp.float32)
+
+        collisions = [
+            SafeLearningGoToGoalAdapter._contact_pair_collision(
+                contact, source_geom, int(target_geom)
+            )
+            for target_geom in target_geoms
+        ]
+        if not collisions:
+            return jnp.zeros_like(reference, dtype=jnp.float32)
+        return jnp.max(jnp.stack(collisions, axis=0), axis=0).astype(jnp.float32)
+
+    @staticmethod
+    def _contact_pair_collision(contact: Any, geom1: int, geom2: int) -> jax.Array:
+        geom = jnp.asarray(contact.geom)
+        dist = jnp.asarray(contact.dist, dtype=jnp.float32)
+        pair = jnp.asarray([geom1, geom2], dtype=geom.dtype)
+        reverse_pair = jnp.asarray([geom2, geom1], dtype=geom.dtype)
+        pair_mask = jnp.all(geom == pair, axis=-1) | jnp.all(
+            geom == reverse_pair, axis=-1
+        )
+        return jnp.any(pair_mask & (dist < 0.0), axis=-1).astype(jnp.float32)
 
     @staticmethod
     def _extras(
@@ -407,6 +477,18 @@ class SafeLearningGoToGoalAdapter:
         hazard_violation = jnp.asarray(
             safety.get("hazard_violation", zeros), dtype=jnp.float32
         )
+        robot_vase_contact = jnp.asarray(
+            safety.get("robot_vase_contact", zeros), dtype=jnp.float32
+        )
+        point_vase_contact = jnp.asarray(
+            safety.get("point_vase_contact", zeros), dtype=jnp.float32
+        )
+        vase_contact = jnp.asarray(
+            safety.get("vase_contact", zeros), dtype=jnp.float32
+        )
+        contact_valid = jnp.asarray(
+            safety.get("contact_valid", zeros), dtype=jnp.float32
+        )
         vase_displaced = jnp.asarray(
             safety.get("vase_displaced", zeros), dtype=jnp.float32
         )
@@ -435,6 +517,10 @@ class SafeLearningGoToGoalAdapter:
             "next_state": next_obs,
             "cost": cost,
             "hazard_violation": hazard_violation,
+            "robot_vase_contact": robot_vase_contact,
+            "point_vase_contact": point_vase_contact,
+            "vase_contact": vase_contact,
+            "contact_valid": contact_valid,
             "vase_displaced": vase_displaced,
             "vase_displacement_valid": vase_displacement_valid,
             "cost_residual_violation": cost_residual_violation,

@@ -258,6 +258,10 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "hard_viol": jnp.asarray([0.0]),
         "cost": jnp.asarray([0.0]),
         "hazard_viol": jnp.asarray([0.125]),
+        "robot_vase_contact": jnp.asarray([0.0625]),
+        "point_vase_contact": jnp.asarray([0.03125]),
+        "vase_contact": jnp.asarray([0.09375]),
+        "contact_valid": jnp.asarray([1.0]),
         "vase_displaced": jnp.asarray([0.25]),
         "vase_disp_valid": jnp.asarray([1.0]),
         "cost_residual_viol": jnp.asarray([0.375]),
@@ -340,6 +344,10 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "actor[α=1.0000" in text
     assert "rew=-1.2345" in text
     assert "hazard=0.1250" in text
+    assert "vase_contact=0.0938" in text
+    assert "robot_vase=0.0625" in text
+    assert "point_vase=0.0312" in text
+    assert "contact_valid=1" in text
     assert "vase_disp=0.2500" in text
     assert "vase_valid=1" in text
     assert "cost_resid=0.3750" in text
