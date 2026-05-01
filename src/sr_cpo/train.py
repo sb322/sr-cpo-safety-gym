@@ -223,8 +223,12 @@ def _toy_step(
             "point_vase_contact": jnp.zeros_like(cost, dtype=jnp.float32),
             "vase_contact": jnp.zeros_like(cost, dtype=jnp.float32),
             "contact_valid": jnp.zeros_like(cost, dtype=jnp.float32),
+            "vase_body_displaced": jnp.zeros_like(cost, dtype=jnp.float32),
+            "vase_body_displacement_valid": jnp.zeros_like(cost, dtype=jnp.float32),
+            "vase_qpos_displaced": jnp.zeros_like(cost, dtype=jnp.float32),
+            "vase_qpos_displacement_valid": jnp.zeros_like(cost, dtype=jnp.float32),
             "vase_displaced": jnp.zeros_like(cost, dtype=jnp.float32),
-            "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
+            "vase_displacement_valid": jnp.zeros_like(cost, dtype=jnp.float32),
             "cost_residual_violation": jnp.zeros_like(cost, dtype=jnp.float32),
             "min_hazard_dist": dist_to_hazard.astype(jnp.float32),
             "min_vase_dist": jnp.full_like(cost, -1.0, dtype=jnp.float32),
@@ -326,6 +330,22 @@ def _collect_toy_trajectory(
         ),
         "contact_valid": _mean_transition_extra(
             transitions.extras, "contact_valid", transitions.extras["cost"]
+        ),
+        "vase_body_displaced": _mean_transition_extra(
+            transitions.extras, "vase_body_displaced", transitions.extras["cost"]
+        ),
+        "vase_body_valid": _mean_transition_extra(
+            transitions.extras,
+            "vase_body_displacement_valid",
+            transitions.extras["cost"],
+        ),
+        "vase_qpos_displaced": _mean_transition_extra(
+            transitions.extras, "vase_qpos_displaced", transitions.extras["cost"]
+        ),
+        "vase_qpos_valid": _mean_transition_extra(
+            transitions.extras,
+            "vase_qpos_displacement_valid",
+            transitions.extras["cost"],
         ),
         "vase_displaced": _mean_transition_extra(
             transitions.extras, "vase_displaced", transitions.extras["cost"]
@@ -451,6 +471,22 @@ def _collect_real_trajectory(
         ),
         "contact_valid": _mean_transition_extra(
             transitions.extras, "contact_valid", transitions.extras["cost"]
+        ),
+        "vase_body_displaced": _mean_transition_extra(
+            transitions.extras, "vase_body_displaced", transitions.extras["cost"]
+        ),
+        "vase_body_valid": _mean_transition_extra(
+            transitions.extras,
+            "vase_body_displacement_valid",
+            transitions.extras["cost"],
+        ),
+        "vase_qpos_displaced": _mean_transition_extra(
+            transitions.extras, "vase_qpos_displaced", transitions.extras["cost"]
+        ),
+        "vase_qpos_valid": _mean_transition_extra(
+            transitions.extras,
+            "vase_qpos_displacement_valid",
+            transitions.extras["cost"],
         ),
         "vase_displaced": _mean_transition_extra(
             transitions.extras, "vase_displaced", transitions.extras["cost"]
@@ -816,6 +852,10 @@ def make_training_epoch(
         metrics["point_vase_contact"] = collect_metrics["point_vase_contact"]
         metrics["vase_contact"] = collect_metrics["vase_contact"]
         metrics["contact_valid"] = collect_metrics["contact_valid"]
+        metrics["vase_body_displaced"] = collect_metrics["vase_body_displaced"]
+        metrics["vase_body_valid"] = collect_metrics["vase_body_valid"]
+        metrics["vase_qpos_displaced"] = collect_metrics["vase_qpos_displaced"]
+        metrics["vase_qpos_valid"] = collect_metrics["vase_qpos_valid"]
         metrics["vase_displaced"] = collect_metrics["vase_displaced"]
         metrics["vase_disp_valid"] = collect_metrics["vase_disp_valid"]
         metrics["cost_residual_viol"] = collect_metrics["cost_residual_viol"]
@@ -1048,6 +1088,10 @@ def format_epoch_metrics(
                 f"robot_vase={_mean_float(metrics, 'robot_vase_contact'):.4f} "
                 f"point_vase={_mean_float(metrics, 'point_vase_contact'):.4f} "
                 f"contact_valid={_mean_float(metrics, 'contact_valid'):.0f} "
+                f"vase_body={_mean_float(metrics, 'vase_body_displaced'):.4f} "
+                f"body_valid={_mean_float(metrics, 'vase_body_valid'):.0f} "
+                f"vase_qpos={_mean_float(metrics, 'vase_qpos_displaced'):.4f} "
+                f"qpos_valid={_mean_float(metrics, 'vase_qpos_valid'):.0f} "
                 f"vase_disp={_mean_float(metrics, 'vase_displaced'):.4f} "
                 f"vase_valid={_mean_float(metrics, 'vase_disp_valid'):.0f} "
                 f"cost_resid={_mean_float(metrics, 'cost_residual_viol'):.4f} "

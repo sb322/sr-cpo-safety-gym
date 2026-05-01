@@ -377,6 +377,10 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "point_vase_contact" in source
     assert "vase_contact" in source
     assert "contact_valid" in source
+    assert "vase_body_displaced" in source
+    assert "vase_body_displacement_valid" in source
+    assert "vase_qpos_displaced" in source
+    assert "vase_qpos_displacement_valid" in source
     assert "vase_displaced" in source
     assert "vase_displacement_valid" in source
     assert "cost_residual_violation" in source
@@ -385,6 +389,10 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "point_vase=" in source
     assert "vase_contact=" in source
     assert "contact_valid=" in source
+    assert "vase_body=" in source
+    assert "body_valid=" in source
+    assert "vase_qpos=" in source
+    assert "qpos_valid=" in source
     assert "vase_disp=" in source
     assert "vase_valid=" in source
     assert "cost_resid=" in source

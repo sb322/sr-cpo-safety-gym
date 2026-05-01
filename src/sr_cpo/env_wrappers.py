@@ -205,13 +205,53 @@ class SafeLearningGoToGoalAdapter:
     def reset(self, rng: jax.Array | int) -> tuple[Any, Transition]:
         key = jax.random.PRNGKey(rng) if isinstance(rng, int) else rng
         state = self.env.reset(key)
+        state = self._attach_initial_vase_xy(state)
         return state, self._transition_from_reset(state)
 
     def step(self, state: Any, action: jax.Array) -> tuple[Any, Transition]:
         action = jnp.asarray(action, dtype=jnp.float32)
         next_state = self.env.step(state, action)
+        next_state = self._carry_initial_vase_xy(state, next_state)
         transition = self._transition_from_step(state, action, next_state)
         return next_state, transition
+
+    def _vase_body_xy(self, state: Any) -> jax.Array | None:
+        data = getattr(state, "data", None)
+        vase_ids = tuple(getattr(self.base_env, "_vase_body_ids", ()))
+        if data is None or not hasattr(data, "xpos") or not vase_ids:
+            return None
+        return jnp.asarray(
+            data.xpos[..., jnp.asarray(vase_ids, dtype=jnp.int32), :2],
+            dtype=jnp.float32,
+        )
+
+    def _attach_initial_vase_xy(self, state: Any) -> Any:
+        vase_xy = self._vase_body_xy(state)
+        if vase_xy is None or not hasattr(state, "replace"):
+            return state
+        info = dict(state.info)
+        info["initial_vase_xy"] = vase_xy
+        return state.replace(info=info)
+
+    def _carry_initial_vase_xy(self, state: Any, next_state: Any) -> Any:
+        current_vase_xy = self._vase_body_xy(next_state)
+        if current_vase_xy is None or not hasattr(next_state, "replace"):
+            return next_state
+        previous_vase_xy = state.info.get("initial_vase_xy", current_vase_xy)
+        zeros = jnp.zeros(current_vase_xy.shape[:-2], dtype=jnp.float32)
+        truncation = _info_array(next_state.info, "truncation", zeros).astype(
+            jnp.float32
+        )
+        done = jnp.asarray(getattr(next_state, "done", zeros), dtype=jnp.float32)
+        reset_mask = jnp.maximum(truncation, done)
+        while reset_mask.ndim < current_vase_xy.ndim:
+            reset_mask = reset_mask[..., None]
+        initial_vase_xy = jnp.where(
+            reset_mask > 0.0, current_vase_xy, previous_vase_xy
+        )
+        info = dict(next_state.info)
+        info["initial_vase_xy"] = initial_vase_xy
+        return next_state.replace(info=info)
 
     def _transition_from_reset(self, state: Any) -> Transition:
         obs = self._state_observation(state)
@@ -290,8 +330,12 @@ class SafeLearningGoToGoalAdapter:
                 "point_vase_contact": zeros,
                 "vase_contact": zeros,
                 "contact_valid": zeros,
+                "vase_body_displaced": zeros,
+                "vase_body_displacement_valid": zeros,
+                "vase_qpos_displaced": zeros,
+                "vase_qpos_displacement_valid": zeros,
                 "vase_displaced": zeros,
-                "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
+                "vase_displacement_valid": zeros,
                 "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
                 "min_hazard_dist": missing_dist,
                 "min_vase_dist": missing_dist,
@@ -306,8 +350,12 @@ class SafeLearningGoToGoalAdapter:
                 "point_vase_contact": zeros,
                 "vase_contact": zeros,
                 "contact_valid": zeros,
+                "vase_body_displaced": zeros,
+                "vase_body_displacement_valid": zeros,
+                "vase_qpos_displaced": zeros,
+                "vase_qpos_displacement_valid": zeros,
                 "vase_displaced": zeros,
-                "vase_displacement_valid": jnp.ones_like(cost, dtype=jnp.float32),
+                "vase_displacement_valid": zeros,
                 "cost_residual_violation": (cost > 0.0).astype(jnp.float32),
                 "min_hazard_dist": missing_dist,
                 "min_vase_dist": missing_dist,
@@ -368,7 +416,10 @@ class SafeLearningGoToGoalAdapter:
         raw_vase_displaced = zeros
         qpos_ids = tuple(getattr(base_env, "_vases_qpos_ids", ()))
         init_q = getattr(base_env, "_init_q", None)
-        if len(qpos_ids) > 0 and init_q is not None and hasattr(data, "qpos"):
+        has_qpos_vase_probe = len(qpos_ids) > 0 and init_q is not None and hasattr(
+            data, "qpos"
+        )
+        if has_qpos_vase_probe:
             xy_qpos_ids = jnp.stack(
                 [jnp.asarray(ids, dtype=jnp.int32)[:2] for ids in qpos_ids],
                 axis=0,
@@ -383,11 +434,46 @@ class SafeLearningGoToGoalAdapter:
             )
 
         hard_violation = (cost > 0.0).astype(jnp.float32)
+        raw_vase_body_displaced = zeros
+        initial_vase_xy = (
+            state.info.get("initial_vase_xy") if hasattr(state, "info") else None
+        )
+        has_body_vase_probe = has_vases and initial_vase_xy is not None
+        if has_body_vase_probe:
+            vase_xy = xpos[..., jnp.asarray(vase_ids, dtype=jnp.int32), :2]
+            initial_vase_xy = jnp.asarray(initial_vase_xy, dtype=jnp.float32)
+            body_disp = jnp.linalg.norm(vase_xy - initial_vase_xy, axis=-1)
+            raw_vase_body_displaced = jnp.any(body_disp > 0.2, axis=-1).astype(
+                jnp.float32
+            )
+        body_vase_valid = (
+            jnp.all(raw_vase_body_displaced <= hard_violation).astype(jnp.float32)
+            if has_body_vase_probe
+            else jnp.asarray(0.0, dtype=jnp.float32)
+        )
+        vase_body_displaced = jnp.where(
+            body_vase_valid > 0.5, raw_vase_body_displaced, zeros
+        )
+        vase_body_displacement_valid = (
+            jnp.ones_like(cost, dtype=jnp.float32) * body_vase_valid
+        )
+
         # The safe-learning env has changed its reset/layout internals across
         # versions. If our qpos-based vase probe over-explains the env's own
         # binary cost, disable it and leave those costs in the residual bucket.
-        vase_valid = jnp.all(raw_vase_displaced <= hard_violation).astype(jnp.float32)
-        vase_displaced = jnp.where(vase_valid > 0.5, raw_vase_displaced, zeros)
+        qpos_vase_valid = (
+            jnp.all(raw_vase_displaced <= hard_violation).astype(jnp.float32)
+            if has_qpos_vase_probe
+            else jnp.asarray(0.0, dtype=jnp.float32)
+        )
+        vase_qpos_displaced = jnp.where(
+            qpos_vase_valid > 0.5, raw_vase_displaced, zeros
+        )
+        vase_qpos_displacement_valid = (
+            jnp.ones_like(cost, dtype=jnp.float32) * qpos_vase_valid
+        )
+        vase_displaced = jnp.maximum(vase_body_displaced, vase_qpos_displaced)
+        vase_valid = jnp.maximum(body_vase_valid, qpos_vase_valid)
         vase_displacement_valid = jnp.ones_like(cost, dtype=jnp.float32) * vase_valid
 
         if has_hazards and has_vases:
@@ -409,6 +495,10 @@ class SafeLearningGoToGoalAdapter:
             "point_vase_contact": point_vase_contact,
             "vase_contact": vase_contact,
             "contact_valid": contact_valid,
+            "vase_body_displaced": vase_body_displaced,
+            "vase_body_displacement_valid": vase_body_displacement_valid,
+            "vase_qpos_displaced": vase_qpos_displaced,
+            "vase_qpos_displacement_valid": vase_qpos_displacement_valid,
             "vase_displaced": vase_displaced,
             "vase_displacement_valid": vase_displacement_valid,
             "cost_residual_violation": cost_residual,
@@ -489,6 +579,18 @@ class SafeLearningGoToGoalAdapter:
         contact_valid = jnp.asarray(
             safety.get("contact_valid", zeros), dtype=jnp.float32
         )
+        vase_body_displaced = jnp.asarray(
+            safety.get("vase_body_displaced", zeros), dtype=jnp.float32
+        )
+        vase_body_displacement_valid = jnp.asarray(
+            safety.get("vase_body_displacement_valid", zeros), dtype=jnp.float32
+        )
+        vase_qpos_displaced = jnp.asarray(
+            safety.get("vase_qpos_displaced", zeros), dtype=jnp.float32
+        )
+        vase_qpos_displacement_valid = jnp.asarray(
+            safety.get("vase_qpos_displacement_valid", zeros), dtype=jnp.float32
+        )
         vase_displaced = jnp.asarray(
             safety.get("vase_displaced", zeros), dtype=jnp.float32
         )
@@ -521,6 +623,10 @@ class SafeLearningGoToGoalAdapter:
             "point_vase_contact": point_vase_contact,
             "vase_contact": vase_contact,
             "contact_valid": contact_valid,
+            "vase_body_displaced": vase_body_displaced,
+            "vase_body_displacement_valid": vase_body_displacement_valid,
+            "vase_qpos_displaced": vase_qpos_displaced,
+            "vase_qpos_displacement_valid": vase_qpos_displacement_valid,
             "vase_displaced": vase_displaced,
             "vase_displacement_valid": vase_displacement_valid,
             "cost_residual_violation": cost_residual_violation,

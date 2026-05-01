@@ -155,12 +155,16 @@ assert "goal_mode_relative" in src_train and "grel=" in src_train and "glmask=" 
     and "score_l2=" in src_train, "relative/native-mask/score logging missing"
 assert "hazard_violation" in src_env and "vase_displaced" in src_env \
     and "vase_displacement_valid" in src_env \
+    and "vase_body_displaced" in src_env and "vase_body_displacement_valid" in src_env \
+    and "vase_qpos_displaced" in src_env and "vase_qpos_displacement_valid" in src_env \
     and "vase_contact" in src_env and "robot_vase_contact" in src_env \
     and "point_vase_contact" in src_env and "contact_valid" in src_env \
     and "cost_residual_violation" in src_env, "safety component adapter diagnostics missing"
 assert "hazard=" in src_train and "vase_disp=" in src_train and "vase_valid=" in src_train \
     and "vase_contact=" in src_train and "robot_vase=" in src_train \
     and "point_vase=" in src_train and "contact_valid=" in src_train \
+    and "vase_body=" in src_train and "body_valid=" in src_train \
+    and "vase_qpos=" in src_train and "qpos_valid=" in src_train \
     and "cost_resid=" in src_train and "min_haz=" in src_train and "min_vase=" in src_train, \
     "safety component training logs missing"
 assert "def desired_goal" in src_env and "def achieved_goal" in src_env, \

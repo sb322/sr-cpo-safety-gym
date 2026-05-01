@@ -79,7 +79,7 @@ def test_safe_learning_go_to_goal_adapter_reset_uses_info_cost() -> None:
     assert bool(jnp.allclose(reset_transition.extras["vase_contact"], 0.0))
     assert bool(jnp.allclose(reset_transition.extras["contact_valid"], 0.0))
     assert bool(jnp.allclose(reset_transition.extras["vase_displaced"], 0.0))
-    assert bool(jnp.allclose(reset_transition.extras["vase_displacement_valid"], 1.0))
+    assert bool(jnp.allclose(reset_transition.extras["vase_displacement_valid"], 0.0))
     assert bool(jnp.allclose(reset_transition.extras["cost_residual_violation"], 0.0))
     assert bool(jnp.allclose(reset_transition.extras["goal_dist"], 1.0))
     assert bool(jnp.allclose(reset_transition.extras["goal_reached"], 0.0))
@@ -106,6 +106,10 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert transition.extras["point_vase_contact"].shape == (num_envs,)
     assert transition.extras["vase_contact"].shape == (num_envs,)
     assert transition.extras["contact_valid"].shape == (num_envs,)
+    assert transition.extras["vase_body_displaced"].shape == (num_envs,)
+    assert transition.extras["vase_body_displacement_valid"].shape == (num_envs,)
+    assert transition.extras["vase_qpos_displaced"].shape == (num_envs,)
+    assert transition.extras["vase_qpos_displacement_valid"].shape == (num_envs,)
     assert transition.extras["vase_displaced"].shape == (num_envs,)
     assert transition.extras["vase_displacement_valid"].shape == (num_envs,)
     assert transition.extras["cost_residual_violation"].shape == (num_envs,)
@@ -129,7 +133,7 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert bool(jnp.allclose(transition.extras["vase_contact"], 0.0))
     assert bool(jnp.allclose(transition.extras["contact_valid"], 0.0))
     assert bool(jnp.allclose(transition.extras["vase_displaced"], 0.0))
-    assert bool(jnp.allclose(transition.extras["vase_displacement_valid"], 1.0))
+    assert bool(jnp.allclose(transition.extras["vase_displacement_valid"], 0.0))
     assert bool(jnp.allclose(transition.extras["cost_residual_violation"], 1.0))
     assert bool(jnp.allclose(transition.extras["min_hazard_dist"], -1.0))
     assert bool(jnp.allclose(transition.extras["goal_dist"], 0.5))
@@ -196,6 +200,15 @@ def test_safety_components_explain_hazard_and_vase_displacement() -> None:
             components["vase_displaced"], jnp.asarray([1.0, 0.0], dtype=jnp.float32)
         )
     )
+    assert bool(jnp.allclose(components["vase_body_displaced"], 0.0))
+    assert bool(jnp.allclose(components["vase_body_displacement_valid"], 0.0))
+    assert bool(
+        jnp.allclose(
+            components["vase_qpos_displaced"],
+            jnp.asarray([1.0, 0.0], dtype=jnp.float32),
+        )
+    )
+    assert bool(jnp.allclose(components["vase_qpos_displacement_valid"], 1.0))
     assert bool(jnp.allclose(components["vase_displacement_valid"], 1.0))
     assert bool(
         jnp.allclose(
@@ -244,6 +257,45 @@ def test_safety_components_disable_overexplaining_vase_probe() -> None:
         jnp.allclose(
             components["cost_residual_violation"],
             jnp.asarray([1.0, 0.0], dtype=jnp.float32),
+        )
+    )
+
+
+def test_safety_components_explain_episode_initial_vase_displacement() -> None:
+    adapter = object.__new__(SafeLearningGoToGoalAdapter)
+    adapter.base_env = SimpleNamespace(
+        _robot_body_id=0,
+        _hazard_body_ids=[],
+        _vase_body_ids=[1],
+        _collision_obstacle_geoms_ids=[],
+    )
+    xpos = jnp.zeros((2, 2, 3), dtype=jnp.float32)
+    xpos = xpos.at[:, 1, :2].set(jnp.asarray([[0.3, 0.0], [0.1, 0.0]]))
+    state = SimpleNamespace(
+        data=SimpleNamespace(xpos=xpos),
+        info={"initial_vase_xy": jnp.zeros((2, 1, 2), dtype=jnp.float32)},
+    )
+
+    components = adapter._safety_components(
+        state, jnp.asarray([1.0, 1.0], dtype=jnp.float32)
+    )
+
+    assert bool(
+        jnp.allclose(
+            components["vase_body_displaced"],
+            jnp.asarray([1.0, 0.0], dtype=jnp.float32),
+        )
+    )
+    assert bool(jnp.allclose(components["vase_body_displacement_valid"], 1.0))
+    assert bool(
+        jnp.allclose(
+            components["vase_displaced"], jnp.asarray([1.0, 0.0], dtype=jnp.float32)
+        )
+    )
+    assert bool(
+        jnp.allclose(
+            components["cost_residual_violation"],
+            jnp.asarray([0.0, 1.0], dtype=jnp.float32),
         )
     )
 
