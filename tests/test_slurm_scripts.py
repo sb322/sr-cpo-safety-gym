@@ -566,6 +566,36 @@ def test_relxy_200epoch_3seed_extends_best_comparison() -> None:
     assert "bash slurm/relative_xy_sweep.sh" in source
 
 
+def test_relxy_200epoch_seeds345_extends_confidence() -> None:
+    source = Path("slurm/relxy_200epoch_seeds345.sh").read_text()
+
+    assert "#SBATCH --array=0-5" in source
+    assert "#SBATCH --time=02:30:00" in source
+    assert "#SBATCH --gres=gpu:a100_40g:1" in source
+    assert "#SBATCH --mem=32G" in source
+    assert "safe_relxy_200_s345.%A_%a.out" in source
+    assert (
+        'RUN200_LABELS=(\n    "pid_off_200_seed3"\n'
+        '    "pid_off_200_seed4"\n    "pid_off_200_seed5"\n'
+        '    "cmdp_nuc3e-3_200_seed3"\n'
+        '    "cmdp_nuc3e-3_200_seed4"\n'
+        '    "cmdp_nuc3e-3_200_seed5"\n)'
+    ) in source
+    assert 'SEED_VALUES=("3" "4" "5" "3" "4" "5")' in source
+    assert (
+        'NU_C_VALUES=("0.0003" "0.0003" "0.0003" "0.003" '
+        '"0.003" "0.003")'
+    ) in source
+    assert 'PID_KP_VALUES=("0.0" "0.0" "0.0" "5.0" "5.0" "5.0")' in source
+    assert 'PID_KI_VALUES=("0.0" "0.0" "0.0" "0.01" "0.01" "0.01")' in source
+    assert "export EPOCHS_OVERRIDE=200" in source
+    assert "export STEPS_PER_EPOCH_OVERRIDE=7" in source
+    assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
+
+
 def test_relxy_cmdp_300epoch_3seed_extends_best_candidate() -> None:
     source = Path("slurm/relxy_cmdp_300epoch_3seed.sh").read_text()
 
