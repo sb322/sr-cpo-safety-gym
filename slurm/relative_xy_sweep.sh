@@ -62,6 +62,8 @@ NUM_BLOCK="8"
 GOAL_START="55"
 GOAL_DIM="2"
 SEED="${SEED_OVERRIDE:-0}"
+EPOCHS="${EPOCHS_OVERRIDE:-50}"
+STEPS_PER_EPOCH="${STEPS_PER_EPOCH_OVERRIDE:-7}"
 SGD_STEPS="${SGD_STEPS_OVERRIDE:-4}"
 NU_C="${NU_C_OVERRIDE:-0.0003}"
 ENTROPY_PARAM="${ENTROPY_PARAM_OVERRIDE:-0.5}"
@@ -94,6 +96,8 @@ echo "MASK_NATIVE_GOAL_LIDAR=$MASK_NATIVE_GOAL_LIDAR"
 echo "CRITIC_SCORE_MODE=$SCORE_MODE"
 echo "NUM_BLOCKS=$NUM_BLOCK"
 echo "USE_RESIDUAL=true"
+echo "EPOCHS=$EPOCHS"
+echo "STEPS_PER_EPOCH=$STEPS_PER_EPOCH"
 echo "SGD_STEPS=$SGD_STEPS"
 echo "GOAL_START=$GOAL_START"
 echo "GOAL_DIM=$GOAL_DIM"
@@ -233,8 +237,8 @@ echo ""
 echo "===== TRAINING ====="
 "$PYTHON" scripts/train_full.py \
     --seed "$SEED" \
-    --epochs 50 \
-    --steps-per-epoch 7 \
+    --epochs "$EPOCHS" \
+    --steps-per-epoch "$STEPS_PER_EPOCH" \
     --num-envs 256 \
     --unroll-length 62 \
     --use-real-env \

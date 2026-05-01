@@ -336,6 +336,8 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert 'GOAL_START="55"' in source
     assert 'GOAL_DIM="2"' in source
     assert 'SEED="${SEED_OVERRIDE:-0}"' in source
+    assert 'EPOCHS="${EPOCHS_OVERRIDE:-50}"' in source
+    assert 'STEPS_PER_EPOCH="${STEPS_PER_EPOCH_OVERRIDE:-7}"' in source
     assert 'SGD_STEPS="${SGD_STEPS_OVERRIDE:-4}"' in source
     assert 'NU_C="${NU_C_OVERRIDE:-0.0003}"' in source
     assert 'ENTROPY_PARAM="${ENTROPY_PARAM_OVERRIDE:-0.5}"' in source
@@ -372,6 +374,8 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "--critic-score-mode" in source
     assert "score_l2=" in source
     assert '--entropy-param "$ENTROPY_PARAM"' in source
+    assert '--epochs "$EPOCHS"' in source
+    assert '--steps-per-epoch "$STEPS_PER_EPOCH"' in source
     assert "hazard_violation" in source
     assert "robot_vase_contact" in source
     assert "point_vase_contact" in source
@@ -488,6 +492,44 @@ def test_relxy_final_3seed_compares_baseline_and_cmdp_candidates() -> None:
     assert "#SBATCH --gres=gpu:a100_40g:1" in source
     assert "#SBATCH --mem=32G" in source
     assert "#SBATCH --time=00:30:00" in source
+
+
+def test_relxy_long_3seed_runs_overnight_baseline_and_cmdp_candidates() -> None:
+    source = Path("slurm/relxy_long_3seed.sh").read_text()
+
+    assert "#SBATCH --array=0-5" in source
+    assert "#SBATCH --time=01:30:00" in source
+    assert "#SBATCH --gres=gpu:a100_40g:1" in source
+    assert "#SBATCH --mem=32G" in source
+    assert "safe_relxy_long.%A_%a.out" in source
+    assert (
+        'LONG_LABELS=(\n    "pid_off_long_seed0"\n'
+        '    "pid_off_long_seed1"\n    "pid_off_long_seed2"\n'
+        '    "cmdp_nuc3e-3_long_seed0"\n'
+        '    "cmdp_nuc3e-3_long_seed1"\n'
+        '    "cmdp_nuc3e-3_long_seed2"\n)'
+    ) in source
+    assert 'SEED_VALUES=("0" "1" "2" "0" "1" "2")' in source
+    assert (
+        'NU_C_VALUES=("0.0003" "0.0003" "0.0003" "0.003" '
+        '"0.003" "0.003")'
+    ) in source
+    assert 'PID_KP_VALUES=("0.0" "0.0" "0.0" "5.0" "5.0" "5.0")' in source
+    assert 'PID_KI_VALUES=("0.0" "0.0" "0.0" "0.01" "0.01" "0.01")' in source
+    assert (
+        'PID_INTEGRAL_DECAY_VALUES=("1.0" "1.0" "1.0" "0.95" '
+        '"0.95" "0.95")'
+    ) in source
+    assert (
+        'COST_RETURN_LOSS_WEIGHT_VALUES=("0.0" "0.0" "0.0" "1.0" '
+        '"1.0" "1.0")'
+    ) in source
+    assert "export EPOCHS_OVERRIDE=100" in source
+    assert "export STEPS_PER_EPOCH_OVERRIDE=7" in source
+    assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
 
 
 def test_production_launchers_use_calibrated_cost_limit() -> None:
