@@ -10,6 +10,7 @@ HEADER_KEYS = (
     "FINAL_LABEL",
     "LONG_LABEL",
     "RUN200_LABEL",
+    "RUN300_LABEL",
     "SEED",
     "EPOCHS",
     "NU_C",
@@ -83,6 +84,7 @@ def parse_log(path: Path) -> dict[str, str]:
 
     label = (
         header.get("RUN200_LABEL")
+        or header.get("RUN300_LABEL")
         or header.get("LONG_LABEL")
         or header.get("FINAL_LABEL")
         or path.stem

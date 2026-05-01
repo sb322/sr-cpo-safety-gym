@@ -40,6 +40,25 @@ def test_parse_log_uses_last_hard_violation_line(tmp_path: Path) -> None:
     assert row["lambda_tilde"] == "0.0"
 
 
+def test_parse_log_uses_300_epoch_label(tmp_path: Path) -> None:
+    log = tmp_path / "safe_relxy_300.123_0.out"
+    log.write_text(
+        "\n".join(
+            [
+                "RUN300_LABEL=cmdp_nuc3e-3_300_seed0",
+                "EPOCHS=300",
+                "SEED=0",
+                "hard_viol=0.03 cost=0.04 gdist=1.1 reached=0.01",
+            ]
+        )
+    )
+
+    row = parse_log(log)
+
+    assert row["label"] == "cmdp_nuc3e-3_300_seed0"
+    assert row["epochs"] == "300"
+
+
 def test_main_writes_csv(tmp_path: Path, capsys) -> None:
     log = tmp_path / "safe_relxy_long.123_1.out"
     log.write_text(
