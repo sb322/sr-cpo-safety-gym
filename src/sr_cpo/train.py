@@ -46,6 +46,15 @@ from sr_cpo.replay_buffer import (
 Array = jax.Array
 PrintFn = Callable[[str], None]
 XY_GOAL_MODES = {"xy", "relative_xy"}
+GOAL_DISTANCE_METRIC_KEYS = (
+    "goal_dist",
+    "goal_dist_p10",
+    "goal_dist_p50",
+    "goal_dist_p90",
+    "goal_dist_lt_0_5",
+    "goal_dist_lt_1_0",
+    "goal_dist_lt_2_0",
+)
 
 
 @dataclass(frozen=True)
@@ -258,6 +267,27 @@ def _mean_transition_extra(
     return jnp.mean(jnp.asarray(extras.get(key, jnp.zeros_like(reference))))
 
 
+def _goal_distance_metrics(goal_dist: Array) -> dict[str, Array]:
+    flat = jnp.sort(jnp.ravel(goal_dist))
+    max_index = flat.size - 1
+
+    def quantile(q: float) -> Array:
+        index = jnp.asarray(q * max_index, dtype=jnp.float32)
+        index = jnp.floor(index).astype(jnp.int32)
+        index = jnp.clip(index, 0, max_index)
+        return flat[index]
+
+    return {
+        "goal_dist": jnp.mean(goal_dist),
+        "goal_dist_p10": quantile(0.10),
+        "goal_dist_p50": quantile(0.50),
+        "goal_dist_p90": quantile(0.90),
+        "goal_dist_lt_0_5": jnp.mean((goal_dist < 0.5).astype(jnp.float32)),
+        "goal_dist_lt_1_0": jnp.mean((goal_dist < 1.0).astype(jnp.float32)),
+        "goal_dist_lt_2_0": jnp.mean((goal_dist < 2.0).astype(jnp.float32)),
+    }
+
+
 def _collect_toy_trajectory(
     train_state: TrainState,
     objects: TrainingObjects,
@@ -312,6 +342,7 @@ def _collect_toy_trajectory(
         d_wall=transitions.extras["d_wall"],
         hard_violations=transitions.extras["hard_violation"],
     )
+    goal_metrics = _goal_distance_metrics(transitions.extras["goal_dist"])
     metrics = {
         "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
@@ -365,7 +396,7 @@ def _collect_toy_trajectory(
         "min_obstacle_dist": _mean_transition_extra(
             transitions.extras, "min_obstacle_dist", transitions.extras["cost"]
         ),
-        "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
+        **goal_metrics,
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
         "goal_slice_mean": jnp.mean(rollout_goals),
         "goal_slice_std": jnp.std(rollout_goals),
@@ -453,6 +484,7 @@ def _collect_real_trajectory(
         d_wall=transitions.extras["d_wall"],
         hard_violations=transitions.extras["hard_violation"],
     )
+    goal_metrics = _goal_distance_metrics(transitions.extras["goal_dist"])
     metrics = {
         "reward": jnp.mean(transitions.reward),
         "cost": jnp.mean(transitions.extras["cost"]),
@@ -506,7 +538,7 @@ def _collect_real_trajectory(
         "min_obstacle_dist": _mean_transition_extra(
             transitions.extras, "min_obstacle_dist", transitions.extras["cost"]
         ),
-        "goal_dist": jnp.mean(transitions.extras["goal_dist"]),
+        **goal_metrics,
         "goal_reached": jnp.mean(transitions.extras["goal_reached"]),
         "goal_slice_mean": jnp.mean(rollout_goals),
         "goal_slice_std": jnp.std(rollout_goals),
@@ -862,7 +894,8 @@ def make_training_epoch(
         metrics["min_hazard_dist"] = collect_metrics["min_hazard_dist"]
         metrics["min_vase_dist"] = collect_metrics["min_vase_dist"]
         metrics["min_obstacle_dist"] = collect_metrics["min_obstacle_dist"]
-        metrics["goal_dist"] = collect_metrics["goal_dist"]
+        for key in GOAL_DISTANCE_METRIC_KEYS:
+            metrics[key] = collect_metrics[key]
         metrics["goal_reached"] = collect_metrics["goal_reached"]
         metrics["goal_start"] = jnp.asarray(config.goal_start, dtype=jnp.float32)
         metrics["goal_dim"] = jnp.asarray(config.goal_dim, dtype=jnp.float32)
@@ -1103,6 +1136,12 @@ def format_epoch_metrics(
                 f"cost-cost0={_mean_float(metrics, 'cost_action_minus_zero'):.4f} "
                 f"rew={_mean_float(metrics, 'rollout_reward'):.4f} "
                 f"gdist={_mean_float(metrics, 'goal_dist'):.4f} "
+                f"g_p10={_mean_float(metrics, 'goal_dist_p10'):.4f} "
+                f"g_p50={_mean_float(metrics, 'goal_dist_p50'):.4f} "
+                f"g_p90={_mean_float(metrics, 'goal_dist_p90'):.4f} "
+                f"g_lt0_5={_mean_float(metrics, 'goal_dist_lt_0_5'):.4f} "
+                f"g_lt1={_mean_float(metrics, 'goal_dist_lt_1_0'):.4f} "
+                f"g_lt2={_mean_float(metrics, 'goal_dist_lt_2_0'):.4f} "
                 f"reached={_mean_float(metrics, 'goal_reached'):.4f} "
                 f"gstart={_mean_float(metrics, 'goal_start'):.0f} "
                 f"gdim={_mean_float(metrics, 'goal_dim'):.0f} "

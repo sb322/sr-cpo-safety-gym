@@ -24,7 +24,9 @@ def test_parse_log_uses_last_hard_violation_line(tmp_path: Path) -> None:
                     "hard_viol=0.03 cost=0.04 hazard=0.02 "
                     "vase_contact=0.001 vase_body=0.0000 vase_qpos=0.0000 "
                     "vase_disp=0.0000 cost_resid=0.019 rew=0.02 "
-                    "gdist=1.2 reached=0.01 λ̃=0.0 Qc=0.04 λQc_a=0.0"
+                    "gdist=1.2 g_p10=0.4 g_p50=0.9 g_p90=2.5 "
+                    "g_lt0_5=0.1 g_lt1=0.6 g_lt2=0.8 reached=0.01 "
+                    "λ̃=0.0 Qc=0.04 λQc_a=0.0"
                 ),
             ]
         )
@@ -37,6 +39,8 @@ def test_parse_log_uses_last_hard_violation_line(tmp_path: Path) -> None:
     assert row["seed"] == "0"
     assert row["hard_viol"] == "0.03"
     assert row["gdist"] == "1.2"
+    assert row["g_p50"] == "0.9"
+    assert row["g_lt1"] == "0.6"
     assert row["lambda_tilde"] == "0.0"
 
 
@@ -100,6 +104,12 @@ def test_main_writes_csv(tmp_path: Path, capsys) -> None:
             "cost_resid": "",
             "rew": "",
             "gdist": "1.5",
+            "g_p10": "",
+            "g_p50": "",
+            "g_p90": "",
+            "g_lt0_5": "",
+            "g_lt1": "",
+            "g_lt2": "",
             "reached": "0.01",
             "lambda_tilde": "",
             "qc": "",

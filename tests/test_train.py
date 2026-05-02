@@ -277,6 +277,12 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "cost_action_minus_zero": jnp.asarray([-0.1]),
         "rollout_reward": jnp.asarray([-1.2345]),
         "goal_dist": jnp.asarray([0.42]),
+        "goal_dist_p10": jnp.asarray([0.12]),
+        "goal_dist_p50": jnp.asarray([0.34]),
+        "goal_dist_p90": jnp.asarray([0.98]),
+        "goal_dist_lt_0_5": jnp.asarray([0.625]),
+        "goal_dist_lt_1_0": jnp.asarray([0.75]),
+        "goal_dist_lt_2_0": jnp.asarray([0.875]),
         "goal_reached": jnp.asarray([0.25]),
         "goal_start": jnp.asarray([16.0]),
         "goal_dim": jnp.asarray([16.0]),
@@ -365,6 +371,12 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "cost0=0.1000" in text
     assert "cost-cost0=-0.1000" in text
     assert "gdist=0.4200" in text
+    assert "g_p10=0.1200" in text
+    assert "g_p50=0.3400" in text
+    assert "g_p90=0.9800" in text
+    assert "g_lt0_5=0.6250" in text
+    assert "g_lt1=0.7500" in text
+    assert "g_lt2=0.8750" in text
     assert "reached=0.2500" in text
     assert "gstart=16" in text
     assert "gdim=16" in text
