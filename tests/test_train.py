@@ -12,6 +12,7 @@ from sr_cpo.train import (
     _mask_goal_in_state,
     format_epoch_metrics,
     initialize_training,
+    make_deterministic_evaluator,
     make_training_epoch,
     prefill_buffer,
     run_training,
@@ -25,6 +26,7 @@ def _tiny_config() -> TrainConfig:
         steps_per_epoch=2,
         num_envs=2,
         unroll_length=3,
+        env_episode_length=8,
         prefill_steps=2,
         sgd_steps=1,
         batch_size=4,
@@ -168,6 +170,38 @@ def test_training_epoch_can_collect_relative_xy_goals_from_real_adapter() -> Non
         assert bool(jnp.all(jnp.isfinite(leaf)))
 
 
+def test_deterministic_evaluator_runs_full_real_adapter_episode() -> None:
+    config = replace(
+        _tiny_config(),
+        use_real_env=True,
+        goal_mode="relative_xy",
+        goal_start=3,
+        goal_dim=2,
+        env_episode_length=5,
+    )
+    adapter = FakeVectorAdapter(num_envs=config.num_envs, observation_dim=5)
+    state, objects = initialize_training(config, env_adapter=adapter)
+    evaluator = make_deterministic_evaluator(objects, config)
+
+    metrics = evaluator(state.actor_params, jax.random.PRNGKey(123))
+
+    assert set(metrics) == {
+        "eval_time_at_goal",
+        "eval_ever_reached",
+        "eval_min_goal_dist",
+        "eval_final_goal_dist",
+        "eval_time_within_0.5",
+        "eval_time_within_1.0",
+        "eval_time_within_2.0",
+        "eval_ever_within_0.5",
+        "eval_ever_within_1.0",
+        "eval_ever_within_2.0",
+        "eval_cost_return",
+    }
+    for leaf in jax.tree_util.tree_leaves(metrics):
+        assert bool(jnp.all(jnp.isfinite(leaf)))
+
+
 def test_training_epoch_accepts_configured_goal_slice() -> None:
     config = replace(_tiny_config(), goal_start=1, goal_dim=2)
     state, objects = initialize_training(config)
@@ -248,6 +282,8 @@ def test_run_training_prints_required_probe_sections() -> None:
     assert "grad[c=" in output
     assert "actor[α=" in output
     assert "α_clip=" in output
+    assert "eval_time_at_goal=" in output
+    assert "eval_final_goal_dist=" in output
 
 
 def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
@@ -345,6 +381,17 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "nu_c": jnp.asarray([0.01]),
         "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
+        "eval_time_at_goal": jnp.asarray([0.1]),
+        "eval_ever_reached": jnp.asarray([0.2]),
+        "eval_min_goal_dist": jnp.asarray([0.3]),
+        "eval_final_goal_dist": jnp.asarray([0.4]),
+        "eval_time_within_0.5": jnp.asarray([0.5]),
+        "eval_time_within_1.0": jnp.asarray([0.6]),
+        "eval_time_within_2.0": jnp.asarray([0.7]),
+        "eval_ever_within_0.5": jnp.asarray([0.8]),
+        "eval_ever_within_1.0": jnp.asarray([0.9]),
+        "eval_ever_within_2.0": jnp.asarray([1.0]),
+        "eval_cost_return": jnp.asarray([1.5]),
     }
 
     text = format_epoch_metrics(0, 1, metrics, steps=10, elapsed=0.1)
@@ -400,3 +447,14 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "mcw=1.0e+00" in text
     assert "λQc_a=1.25e-01" in text
     assert "nu_c=1.0e-02" in text
+    assert "eval_time_at_goal=0.1000" in text
+    assert "eval_ever_reached=0.2000" in text
+    assert "eval_min_goal_dist=0.3000" in text
+    assert "eval_final_goal_dist=0.4000" in text
+    assert "eval_time_within_0.5=0.5000" in text
+    assert "eval_time_within_1.0=0.6000" in text
+    assert "eval_time_within_2.0=0.7000" in text
+    assert "eval_ever_within_0.5=0.8000" in text
+    assert "eval_ever_within_1.0=0.9000" in text
+    assert "eval_ever_within_2.0=1.0000" in text
+    assert "eval_cost_return=1.5000" in text

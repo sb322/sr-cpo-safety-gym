@@ -55,6 +55,7 @@ GOAL_DISTANCE_METRIC_KEYS = (
     "goal_dist_lt_1_0",
     "goal_dist_lt_2_0",
 )
+EVAL_GOAL_RADII = (0.5, 1.0, 2.0)
 
 
 @dataclass(frozen=True)
@@ -286,6 +287,128 @@ def _goal_distance_metrics(goal_dist: Array) -> dict[str, Array]:
         "goal_dist_lt_1_0": jnp.mean((goal_dist < 1.0).astype(jnp.float32)),
         "goal_dist_lt_2_0": jnp.mean((goal_dist < 2.0).astype(jnp.float32)),
     }
+
+
+def _deterministic_action(
+    actor: Actor,
+    actor_params: Any,
+    obs: Array,
+    goal: Array,
+    config: TrainConfig,
+) -> Array:
+    mean, _ = actor.apply(actor_params, _mask_goal_in_state(obs, config), goal)
+    return jnp.tanh(mean)
+
+
+def _eval_metrics(
+    goal_dist: Array, goal_reached: Array, cost: Array
+) -> dict[str, Array]:
+    goal_dist = jnp.asarray(goal_dist, dtype=jnp.float32)
+    goal_reached = jnp.asarray(goal_reached, dtype=jnp.float32)
+    cost = jnp.asarray(cost, dtype=jnp.float32)
+    metrics = {
+        "eval_time_at_goal": jnp.mean(goal_reached),
+        "eval_ever_reached": jnp.mean(jnp.max(goal_reached, axis=0)),
+        "eval_min_goal_dist": jnp.mean(jnp.min(goal_dist, axis=0)),
+        "eval_final_goal_dist": jnp.mean(goal_dist[-1]),
+        "eval_cost_return": jnp.mean(jnp.sum(cost, axis=0)),
+    }
+    for radius in EVAL_GOAL_RADII:
+        within = (goal_dist <= radius).astype(jnp.float32)
+        label = str(radius)
+        metrics[f"eval_time_within_{label}"] = jnp.mean(within)
+        metrics[f"eval_ever_within_{label}"] = jnp.mean(jnp.max(within, axis=0))
+    return metrics
+
+
+def make_deterministic_evaluator(
+    objects: TrainingObjects, config: TrainConfig
+) -> Callable[[Any, Array], Mapping[str, Array]]:
+    """Builds a full-episode deterministic actor-mean evaluator."""
+
+    env_adapter = objects.env_adapter
+
+    def evaluate_real(actor_params: Any, key: Array) -> Mapping[str, Array]:
+        if env_adapter is None:
+            raise ValueError("real-env evaluation requires objects.env_adapter")
+        eval_state, _ = env_adapter.reset(key)
+
+        def eval_step(env_state: Any, _: Array) -> tuple[Any, Mapping[str, Array]]:
+            obs = _real_state_observation(env_adapter, env_state)
+            goal = _real_rollout_goal(env_adapter, env_state, config)
+            action = _deterministic_action(
+                objects.actor, actor_params, obs, goal, config
+            )
+            next_env_state, transition = env_adapter.step(env_state, action)
+            reference = jnp.zeros((config.num_envs,), dtype=jnp.float32)
+            cost = jnp.asarray(
+                transition.extras.get("cost", reference), dtype=jnp.float32
+            )
+            return next_env_state, {
+                "goal_dist": jnp.asarray(
+                    transition.extras.get("goal_dist", reference), dtype=jnp.float32
+                ),
+                "goal_reached": jnp.asarray(
+                    transition.extras.get("goal_reached", reference),
+                    dtype=jnp.float32,
+                ),
+                "cost": cost,
+            }
+
+        _, trajectory = jax.lax.scan(
+            eval_step, eval_state, jnp.arange(config.env_episode_length)
+        )
+        return _eval_metrics(
+            trajectory["goal_dist"],
+            trajectory["goal_reached"],
+            trajectory["cost"],
+        )
+
+    def evaluate_toy(actor_params: Any, key: Array) -> Mapping[str, Array]:
+        key, reset_key = jax.random.split(key)
+        eval_state = ToyEnvState(
+            obs=0.1
+            * jax.random.normal(
+                reset_key,
+                (config.num_envs, config.observation_dim),
+                dtype=jnp.float32,
+            )
+        )
+
+        def eval_step(
+            carry: tuple[Array, ToyEnvState], _: Array
+        ) -> tuple[tuple[Array, ToyEnvState], Mapping[str, Array]]:
+            step_key, env_state = carry
+            step_key, env_key = jax.random.split(step_key)
+            goal = jnp.zeros((config.num_envs, config.goal_dim), dtype=jnp.float32)
+            action = _deterministic_action(
+                objects.actor,
+                actor_params,
+                env_state.obs,
+                goal,
+                config,
+            )
+            next_env_state, transition = _toy_step(
+                env_state, action, env_key, config
+            )
+            return (step_key, next_env_state), {
+                "goal_dist": transition.extras["goal_dist"],
+                "goal_reached": transition.extras["goal_reached"],
+                "cost": transition.extras["cost"],
+            }
+
+        _, trajectory = jax.lax.scan(
+            eval_step, (key, eval_state), jnp.arange(config.env_episode_length)
+        )
+        return _eval_metrics(
+            trajectory["goal_dist"],
+            trajectory["goal_reached"],
+            trajectory["cost"],
+        )
+
+    if env_adapter is not None:
+        return jax.jit(evaluate_real)
+    return jax.jit(evaluate_toy)
 
 
 def _collect_toy_trajectory(
@@ -1214,6 +1337,27 @@ def format_epoch_metrics(
                 f"f_term={_mean_float(metrics, 'f_term_actor'):.3f} "
                 f"α_clip={_mean_float(metrics, 'alpha_clip'):.2f}]"
             ),
+            (
+                "         "
+                f"eval_time_at_goal={_mean_float(metrics, 'eval_time_at_goal'):.4f} "
+                f"eval_ever_reached={_mean_float(metrics, 'eval_ever_reached'):.4f} "
+                f"eval_min_goal_dist={_mean_float(metrics, 'eval_min_goal_dist'):.4f} "
+                f"eval_final_goal_dist="
+                f"{_mean_float(metrics, 'eval_final_goal_dist'):.4f} "
+                f"eval_time_within_0.5="
+                f"{_mean_float(metrics, 'eval_time_within_0.5'):.4f} "
+                f"eval_time_within_1.0="
+                f"{_mean_float(metrics, 'eval_time_within_1.0'):.4f} "
+                f"eval_time_within_2.0="
+                f"{_mean_float(metrics, 'eval_time_within_2.0'):.4f} "
+                f"eval_ever_within_0.5="
+                f"{_mean_float(metrics, 'eval_ever_within_0.5'):.4f} "
+                f"eval_ever_within_1.0="
+                f"{_mean_float(metrics, 'eval_ever_within_1.0'):.4f} "
+                f"eval_ever_within_2.0="
+                f"{_mean_float(metrics, 'eval_ever_within_2.0'):.4f} "
+                f"eval_cost_return={_mean_float(metrics, 'eval_cost_return'):.4f}"
+            ),
         ]
     )
 
@@ -1272,6 +1416,8 @@ def run_training(
     state = prefill_buffer(state, objects, config)
     print_prefill_probe(state, print_fn)
     training_epoch = make_training_epoch(objects, config)
+    deterministic_eval = make_deterministic_evaluator(objects, config)
+    eval_key = jax.random.fold_in(jax.random.PRNGKey(config.seed), 0x5EED)
 
     last_metrics: Mapping[str, Array] | None = None
     for epoch in range(config.epochs):
@@ -1279,6 +1425,10 @@ def run_training(
         state, metrics = training_epoch(state)
         jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
         elapsed = time.perf_counter() - start
+        eval_key, epoch_eval_key = jax.random.split(eval_key)
+        eval_metrics = deterministic_eval(state.actor_params, epoch_eval_key)
+        jax.tree_util.tree_map(lambda x: x.block_until_ready(), eval_metrics)
+        metrics = {**metrics, **eval_metrics}
         steps = int(state.step)
         print_fn(
             format_epoch_metrics(
