@@ -74,6 +74,11 @@ PID_KI="${PID_KI_OVERRIDE:-0.1}"
 PID_KD="${PID_KD_OVERRIDE:-0.0}"
 PID_INTEGRAL_DECAY="${PID_INTEGRAL_DECAY_OVERRIDE:-1.0}"
 PROBE_COUNTERFACTUAL_COSTS="${PROBE_COUNTERFACTUAL_COSTS_OVERRIDE:-false}"
+TRACE_GOAL_RESAMPLING="${TRACE_GOAL_RESAMPLING_OVERRIDE:-false}"
+TRACE_EPISODES="${TRACE_EPISODES_OVERRIDE:-2}"
+TRACE_WINDOW="${TRACE_WINDOW_OVERRIDE:-10}"
+TRACE_SEED="${TRACE_SEED_OVERRIDE:-12345}"
+TRACE_OUTPUT="${TRACE_OUTPUT_OVERRIDE:-eval_goal_resampling.${SLURM_JOB_ID:-manual}_${TASK_ID}.csv}"
 
 MASK_ARGS=()
 if [ "$MASK_NATIVE_GOAL_LIDAR" = "true" ]; then
@@ -111,6 +116,11 @@ echo "PID_KI=$PID_KI"
 echo "PID_KD=$PID_KD"
 echo "PID_INTEGRAL_DECAY=$PID_INTEGRAL_DECAY"
 echo "PROBE_COUNTERFACTUAL_COSTS=$PROBE_COUNTERFACTUAL_COSTS"
+echo "TRACE_GOAL_RESAMPLING=$TRACE_GOAL_RESAMPLING"
+echo "TRACE_EPISODES=$TRACE_EPISODES"
+echo "TRACE_WINDOW=$TRACE_WINDOW"
+echo "TRACE_SEED=$TRACE_SEED"
+echo "TRACE_OUTPUT=$TRACE_OUTPUT"
 set +o pipefail
 nvidia-smi 2>&1 | head -20
 set -o pipefail
@@ -233,9 +243,22 @@ print(f"robot_xy_from_obs = {transition.observation[:, -2:]}")
 PYCHECK
 [ $? -ne 0 ] && exit 1
 
+ENTRYPOINT="scripts/train_full.py"
+TRACE_ARGS=()
+if [ "$TRACE_GOAL_RESAMPLING" = "true" ]; then
+    ENTRYPOINT="scripts/trace_eval_goal_resampling.py"
+    TRACE_ARGS+=(
+        --trace-episodes "$TRACE_EPISODES"
+        --trace-window "$TRACE_WINDOW"
+        --trace-seed "$TRACE_SEED"
+        --trace-output "$TRACE_OUTPUT"
+    )
+fi
+
 echo ""
 echo "===== TRAINING ====="
-"$PYTHON" scripts/train_full.py \
+echo "ENTRYPOINT=$ENTRYPOINT"
+"$PYTHON" "$ENTRYPOINT" \
     --seed "$SEED" \
     --epochs "$EPOCHS" \
     --steps-per-epoch "$STEPS_PER_EPOCH" \
@@ -276,4 +299,5 @@ echo "===== TRAINING ====="
     --pid-kd "$PID_KD" \
     --pid-integral-min -10.0 \
     --pid-integral-max 10.0 \
-    --pid-integral-decay "$PID_INTEGRAL_DECAY"
+    --pid-integral-decay "$PID_INTEGRAL_DECAY" \
+    "${TRACE_ARGS[@]}"

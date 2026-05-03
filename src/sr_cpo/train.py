@@ -197,6 +197,22 @@ def _real_state_observation(env_adapter: Any, env_state: Any) -> Array:
     return jnp.asarray(env_state.obs, dtype=jnp.float32)
 
 
+def _real_robot_xy(env_adapter: Any, env_state: Any) -> Array:
+    if hasattr(env_adapter, "achieved_goal"):
+        return env_adapter.achieved_goal(env_state)
+    return jnp.asarray(
+        env_state.data.xpos[..., env_adapter.base_env._robot_body_id, :2],
+        dtype=jnp.float32,
+    )
+
+
+def _real_goal_xy(env_adapter: Any, env_state: Any) -> Array:
+    return jnp.asarray(
+        env_state.data.mocap_pos[..., env_adapter.base_env._goal_mocap_id, :2],
+        dtype=jnp.float32,
+    )
+
+
 def _toy_step(
     env_state: ToyEnvState,
     action: Array,
@@ -409,6 +425,56 @@ def make_deterministic_evaluator(
     if env_adapter is not None:
         return jax.jit(evaluate_real)
     return jax.jit(evaluate_toy)
+
+
+def trace_deterministic_eval_goal_resampling(
+    objects: TrainingObjects,
+    config: TrainConfig,
+    actor_params: Any,
+    key: Array,
+) -> Mapping[str, Array]:
+    """Traces goal/robot positions during a deterministic real-env eval episode."""
+
+    env_adapter = objects.env_adapter
+    if env_adapter is None:
+        raise ValueError("goal-resampling trace requires a real env adapter")
+    eval_state, _ = env_adapter.reset(key)
+
+    def trace_step(env_state: Any, t: Array) -> tuple[Any, Mapping[str, Array]]:
+        robot_xy_before = _real_robot_xy(env_adapter, env_state)
+        goal_xy_before = _real_goal_xy(env_adapter, env_state)
+        obs = _real_state_observation(env_adapter, env_state)
+        goal = _real_rollout_goal(env_adapter, env_state, config)
+        action = _deterministic_action(objects.actor, actor_params, obs, goal, config)
+        next_env_state, transition = env_adapter.step(env_state, action)
+
+        robot_xy = _real_robot_xy(env_adapter, next_env_state)
+        goal_xy = _real_goal_xy(env_adapter, next_env_state)
+        reference = jnp.zeros((config.num_envs,), dtype=jnp.float32)
+        goal_dist = jnp.asarray(
+            transition.extras.get("goal_dist", reference), dtype=jnp.float32
+        )
+        goal_reached = jnp.asarray(
+            transition.extras.get("goal_reached", reference), dtype=jnp.float32
+        )
+        old_goal_dist_after_step = jnp.linalg.norm(robot_xy - goal_xy_before, axis=-1)
+        goal_shift = jnp.linalg.norm(goal_xy - goal_xy_before, axis=-1)
+        return next_env_state, {
+            "t": jnp.full((config.num_envs,), t, dtype=jnp.int32),
+            "robot_xy": robot_xy,
+            "goal_xy": goal_xy,
+            "goal_dist": goal_dist,
+            "goal_reached": goal_reached,
+            "goal_xy_before": goal_xy_before,
+            "robot_xy_before": robot_xy_before,
+            "old_goal_dist_after_step": old_goal_dist_after_step,
+            "goal_shift": goal_shift,
+        }
+
+    _, trace = jax.lax.scan(
+        trace_step, eval_state, jnp.arange(config.env_episode_length)
+    )
+    return jax.tree_util.tree_map(lambda x: x.block_until_ready(), trace)
 
 
 def _collect_toy_trajectory(
