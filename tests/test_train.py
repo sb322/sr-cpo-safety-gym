@@ -186,20 +186,123 @@ def test_deterministic_evaluator_runs_full_real_adapter_episode() -> None:
     metrics = evaluator(state.actor_params, jax.random.PRNGKey(123))
 
     assert set(metrics) == {
-        "eval_time_at_goal",
         "eval_ever_reached",
-        "eval_min_goal_dist",
-        "eval_final_goal_dist",
-        "eval_time_within_0.5",
-        "eval_time_within_1.0",
-        "eval_time_within_2.0",
+        "eval_first_hit_time",
+        "eval_min_goal_dist_initial_goal",
+        "eval_ever_within_0.31",
         "eval_ever_within_0.5",
         "eval_ever_within_1.0",
         "eval_ever_within_2.0",
+        "eval_success_count",
         "eval_cost_return",
+        "eval_time_at_goal_resampled",
+        "eval_final_goal_dist_resampled",
     }
     for leaf in jax.tree_util.tree_leaves(metrics):
         assert bool(jnp.all(jnp.isfinite(leaf)))
+
+
+class ResamplingGoalAdapter:
+    action_size = 2
+
+    def __init__(self, *, num_envs: int) -> None:
+        self.num_envs = num_envs
+
+    def achieved_goal(self, state: ToyEnvState) -> jax.Array:
+        return state.obs[:, :2]
+
+    def goal_xy(self, state: ToyEnvState) -> jax.Array:
+        return state.obs[:, 2:4]
+
+    def desired_goal(self, state: ToyEnvState) -> jax.Array:
+        return self.goal_xy(state) - self.achieved_goal(state)
+
+    def _state_observation(self, state: ToyEnvState) -> jax.Array:
+        return state.obs
+
+    def reset(self, key: jax.Array) -> tuple[ToyEnvState, Transition]:
+        del key
+        obs = jnp.tile(
+            jnp.asarray([[0.0, 0.0, 0.2, 0.0, 0.0]], dtype=jnp.float32),
+            (self.num_envs, 1),
+        )
+        transition = Transition(
+            observation=obs,
+            action=jnp.zeros((self.num_envs, self.action_size), dtype=jnp.float32),
+            reward=jnp.zeros((self.num_envs,), dtype=jnp.float32),
+            discount=jnp.ones((self.num_envs,), dtype=jnp.float32),
+            extras={
+                "next_state": obs,
+                "cost": jnp.zeros((self.num_envs,), dtype=jnp.float32),
+                "goal_dist": jnp.full((self.num_envs,), 0.2, dtype=jnp.float32),
+                "goal_reached": jnp.zeros((self.num_envs,), dtype=jnp.float32),
+                "desired_goal": self.desired_goal(ToyEnvState(obs=obs)),
+            },
+        )
+        return ToyEnvState(obs=obs), transition
+
+    def step(
+        self, state: ToyEnvState, action: jax.Array
+    ) -> tuple[ToyEnvState, Transition]:
+        del action
+        step_index = state.obs[:, 4]
+        first_step = step_index < 0.5
+        old_goal = self.goal_xy(state)
+        robot_after = jnp.where(
+            first_step[:, None], old_goal, self.achieved_goal(state)
+        )
+        new_goal = jnp.tile(
+            jnp.asarray([[2.0, 0.0]], dtype=jnp.float32), (self.num_envs, 1)
+        )
+        goal_after = jnp.where(first_step[:, None], new_goal, old_goal)
+        next_obs = jnp.concatenate(
+            [robot_after, goal_after, (step_index + 1.0)[:, None]], axis=-1
+        )
+        goal_dist_after_resample = jnp.linalg.norm(goal_after - robot_after, axis=-1)
+        reached = first_step.astype(jnp.float32)
+        transition = Transition(
+            observation=state.obs,
+            action=jnp.zeros((self.num_envs, self.action_size), dtype=jnp.float32),
+            reward=jnp.zeros((self.num_envs,), dtype=jnp.float32),
+            discount=jnp.ones((self.num_envs,), dtype=jnp.float32),
+            extras={
+                "state": state.obs,
+                "next_state": next_obs,
+                "cost": jnp.zeros((self.num_envs,), dtype=jnp.float32),
+                "goal_dist": goal_dist_after_resample,
+                "goal_reached": reached,
+                "desired_goal": self.desired_goal(state),
+                "d_wall": jnp.ones((self.num_envs,), dtype=jnp.float32),
+                "hard_violation": jnp.zeros((self.num_envs,), dtype=jnp.float32),
+            },
+        )
+        return ToyEnvState(obs=next_obs), transition
+
+
+def test_deterministic_evaluator_uses_pre_resample_goal_distance() -> None:
+    config = replace(
+        _tiny_config(),
+        use_real_env=True,
+        goal_mode="relative_xy",
+        goal_start=3,
+        goal_dim=2,
+        observation_dim=5,
+        env_episode_length=3,
+        eval_freeze_goal_after_success=True,
+    )
+    adapter = ResamplingGoalAdapter(num_envs=config.num_envs)
+    state, objects = initialize_training(config, env_adapter=adapter)
+    evaluator = make_deterministic_evaluator(objects, config)
+
+    metrics = evaluator(state.actor_params, jax.random.PRNGKey(123))
+
+    assert float(metrics["eval_ever_reached"]) == 1.0
+    assert float(metrics["eval_first_hit_time"]) == 0.0
+    assert float(metrics["eval_success_count"]) == 1.0
+    assert float(metrics["eval_ever_within_0.31"]) == 1.0
+    assert float(metrics["eval_min_goal_dist_initial_goal"]) == 0.0
+    assert float(metrics["eval_final_goal_dist_resampled"]) > 1.0
+    assert float(metrics["eval_frozen_final_dist"]) == 0.0
 
 
 def test_training_epoch_accepts_configured_goal_slice() -> None:
@@ -282,8 +385,10 @@ def test_run_training_prints_required_probe_sections() -> None:
     assert "grad[c=" in output
     assert "actor[α=" in output
     assert "α_clip=" in output
-    assert "eval_time_at_goal=" in output
-    assert "eval_final_goal_dist=" in output
+    assert "eval_ever_reached=" in output
+    assert "eval_min_goal_dist_initial_goal=" in output
+    assert "eval_time_at_goal_resampled=" in output
+    assert "eval_final_goal_dist_resampled=" in output
 
 
 def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
@@ -381,17 +486,26 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "nu_c": jnp.asarray([0.01]),
         "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
-        "eval_time_at_goal": jnp.asarray([0.1]),
         "eval_ever_reached": jnp.asarray([0.2]),
-        "eval_min_goal_dist": jnp.asarray([0.3]),
-        "eval_final_goal_dist": jnp.asarray([0.4]),
-        "eval_time_within_0.5": jnp.asarray([0.5]),
-        "eval_time_within_1.0": jnp.asarray([0.6]),
-        "eval_time_within_2.0": jnp.asarray([0.7]),
+        "eval_first_hit_time": jnp.asarray([12.0]),
+        "eval_min_goal_dist_initial_goal": jnp.asarray([0.3]),
+        "eval_ever_within_0.31": jnp.asarray([0.4]),
         "eval_ever_within_0.5": jnp.asarray([0.8]),
         "eval_ever_within_1.0": jnp.asarray([0.9]),
         "eval_ever_within_2.0": jnp.asarray([1.0]),
+        "eval_success_count": jnp.asarray([2.0]),
         "eval_cost_return": jnp.asarray([1.5]),
+        "eval_time_at_goal_resampled": jnp.asarray([0.1]),
+        "eval_final_goal_dist_resampled": jnp.asarray([0.4]),
+        "eval_frozen_time_within_0.31": jnp.asarray([0.2]),
+        "eval_frozen_time_within_0.5": jnp.asarray([0.3]),
+        "eval_frozen_final_dist": jnp.asarray([0.6]),
+        "eval_ever_reached_std0_25": jnp.asarray([0.25]),
+        "eval_first_hit_time_std0_25": jnp.asarray([13.0]),
+        "eval_min_goal_dist_initial_goal_std0_25": jnp.asarray([0.35]),
+        "eval_ever_within_0.31_std0_25": jnp.asarray([0.45]),
+        "eval_success_count_std0_25": jnp.asarray([2.5]),
+        "eval_cost_return_std0_25": jnp.asarray([1.75]),
     }
 
     text = format_epoch_metrics(0, 1, metrics, steps=10, elapsed=0.1)
@@ -447,14 +561,19 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "mcw=1.0e+00" in text
     assert "λQc_a=1.25e-01" in text
     assert "nu_c=1.0e-02" in text
-    assert "eval_time_at_goal=0.1000" in text
     assert "eval_ever_reached=0.2000" in text
-    assert "eval_min_goal_dist=0.3000" in text
-    assert "eval_final_goal_dist=0.4000" in text
-    assert "eval_time_within_0.5=0.5000" in text
-    assert "eval_time_within_1.0=0.6000" in text
-    assert "eval_time_within_2.0=0.7000" in text
+    assert "eval_first_hit_time=12.00" in text
+    assert "eval_min_goal_dist_initial_goal=0.3000" in text
+    assert "eval_ever_within_0.31=0.4000" in text
     assert "eval_ever_within_0.5=0.8000" in text
     assert "eval_ever_within_1.0=0.9000" in text
     assert "eval_ever_within_2.0=1.0000" in text
+    assert "eval_success_count=2.0000" in text
     assert "eval_cost_return=1.5000" in text
+    assert "eval_time_at_goal_resampled=0.1000" in text
+    assert "eval_final_goal_dist_resampled=0.4000" in text
+    assert "eval_frozen_time_within_0.31=0.2000" in text
+    assert "eval_frozen_time_within_0.5=0.3000" in text
+    assert "eval_frozen_final_dist=0.6000" in text
+    assert "eval_ever_reached_std0_25=0.2500" in text
+    assert "eval_first_hit_time_std0_25=13.00" in text

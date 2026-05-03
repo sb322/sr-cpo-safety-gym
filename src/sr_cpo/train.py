@@ -11,12 +11,13 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import optax
-from flax import struct
+from flax import serialization, struct
 
 from sr_cpo.dual_estimator import estimate_discounted_cost
 from sr_cpo.env_wrappers import Transition, make_safe_learning_go_to_goal
@@ -55,7 +56,7 @@ GOAL_DISTANCE_METRIC_KEYS = (
     "goal_dist_lt_1_0",
     "goal_dist_lt_2_0",
 )
-EVAL_GOAL_RADII = (0.5, 1.0, 2.0)
+EVAL_PRIMARY_GOAL_RADII = (0.31, 0.5, 1.0, 2.0)
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,9 @@ class TrainConfig:
     pid_integral_min: float = -10.0
     pid_integral_max: float = 10.0
     pid_integral_decay: float = 1.0
+    eval_freeze_goal_after_success: bool = False
+    eval_action_std_scales: str = "0.0"
+    checkpoint_output: str = ""
 
 
 @dataclass(frozen=True)
@@ -199,18 +203,39 @@ def _real_state_observation(env_adapter: Any, env_state: Any) -> Array:
 
 def _real_robot_xy(env_adapter: Any, env_state: Any) -> Array:
     if hasattr(env_adapter, "achieved_goal"):
-        return env_adapter.achieved_goal(env_state)
-    return jnp.asarray(
-        env_state.data.xpos[..., env_adapter.base_env._robot_body_id, :2],
-        dtype=jnp.float32,
-    )
+        try:
+            return env_adapter.achieved_goal(env_state)
+        except ValueError:
+            pass
+    data = getattr(env_state, "data", None)
+    if data is not None and hasattr(data, "xpos") and hasattr(env_adapter, "base_env"):
+        return jnp.asarray(
+            data.xpos[..., env_adapter.base_env._robot_body_id, :2],
+            dtype=jnp.float32,
+        )
+    obs = jnp.asarray(env_state.obs, dtype=jnp.float32)
+    return jnp.zeros((*obs.shape[:-1], 2), dtype=jnp.float32)
 
 
 def _real_goal_xy(env_adapter: Any, env_state: Any) -> Array:
-    return jnp.asarray(
-        env_state.data.mocap_pos[..., env_adapter.base_env._goal_mocap_id, :2],
-        dtype=jnp.float32,
-    )
+    if hasattr(env_adapter, "goal_xy"):
+        return jnp.asarray(env_adapter.goal_xy(env_state), dtype=jnp.float32)
+    data = getattr(env_state, "data", None)
+    if data is not None and hasattr(data, "mocap_pos") and hasattr(
+        env_adapter, "base_env"
+    ):
+        return jnp.asarray(
+            data.mocap_pos[..., env_adapter.base_env._goal_mocap_id, :2],
+            dtype=jnp.float32,
+        )
+    if hasattr(env_adapter, "desired_goal"):
+        robot_xy = _real_robot_xy(env_adapter, env_state)
+        desired_goal = jnp.asarray(
+            env_adapter.desired_goal(env_state), dtype=jnp.float32
+        )
+        if desired_goal.shape[-1] == 2:
+            return robot_xy + desired_goal
+    raise AttributeError("real goal XY is unavailable for this environment adapter")
 
 
 def _toy_step(
@@ -316,68 +341,206 @@ def _deterministic_action(
     return jnp.tanh(mean)
 
 
-def _eval_metrics(
-    goal_dist: Array, goal_reached: Array, cost: Array
+def _eval_action(
+    actor: Actor,
+    actor_params: Any,
+    obs: Array,
+    goal: Array,
+    key: Array,
+    config: TrainConfig,
+    *,
+    std_scale: float,
+) -> Array:
+    mean, log_std = actor.apply(actor_params, _mask_goal_in_state(obs, config), goal)
+    if std_scale <= 0.0:
+        return jnp.tanh(mean)
+    noise = jax.random.normal(key, shape=mean.shape, dtype=mean.dtype)
+    return jnp.tanh(mean + std_scale * jnp.exp(log_std) * noise)
+
+
+def _eval_radius_label(radius: float) -> str:
+    return str(radius)
+
+
+def _parse_eval_std_scales(raw: str) -> tuple[float, ...]:
+    values: list[float] = []
+    for part in raw.replace(",", " ").split():
+        value = float(part)
+        if value < 0.0:
+            raise ValueError("eval action std scales must be non-negative")
+        if value not in values:
+            values.append(value)
+    return tuple(values) if values else (0.0,)
+
+
+def _eval_scale_suffix(std_scale: float) -> str:
+    if std_scale <= 0.0:
+        return ""
+    label = f"{std_scale:g}".replace(".", "_")
+    return f"_std{label}"
+
+
+def _suffix_eval_metrics(
+    metrics: Mapping[str, Array],
+    *,
+    std_scale: float,
 ) -> dict[str, Array]:
-    goal_dist = jnp.asarray(goal_dist, dtype=jnp.float32)
+    suffix = _eval_scale_suffix(std_scale)
+    if not suffix:
+        return dict(metrics)
+    return {f"{key}{suffix}": value for key, value in metrics.items()}
+
+
+def _eval_metrics(
+    *,
+    commanded_goal_dist: Array,
+    initial_goal_dist: Array,
+    resampled_goal_dist: Array,
+    goal_reached: Array,
+    cost: Array,
+    frozen_goal_dist: Array | None = None,
+) -> dict[str, Array]:
+    commanded_goal_dist = jnp.asarray(commanded_goal_dist, dtype=jnp.float32)
+    initial_goal_dist = jnp.asarray(initial_goal_dist, dtype=jnp.float32)
+    resampled_goal_dist = jnp.asarray(resampled_goal_dist, dtype=jnp.float32)
     goal_reached = jnp.asarray(goal_reached, dtype=jnp.float32)
     cost = jnp.asarray(cost, dtype=jnp.float32)
+    reached_bool = goal_reached > 0.5
+    ever_reached = jnp.max(goal_reached, axis=0)
+    first_hit_index = jnp.argmax(reached_bool, axis=0).astype(jnp.float32)
+    episode_length = jnp.asarray(goal_reached.shape[0], dtype=jnp.float32)
+    first_hit_time = jnp.where(ever_reached > 0.5, first_hit_index, episode_length)
     metrics = {
-        "eval_time_at_goal": jnp.mean(goal_reached),
-        "eval_ever_reached": jnp.mean(jnp.max(goal_reached, axis=0)),
-        "eval_min_goal_dist": jnp.mean(jnp.min(goal_dist, axis=0)),
-        "eval_final_goal_dist": jnp.mean(goal_dist[-1]),
+        "eval_ever_reached": jnp.mean(ever_reached),
+        "eval_first_hit_time": jnp.mean(first_hit_time),
+        "eval_min_goal_dist_initial_goal": jnp.mean(
+            jnp.min(initial_goal_dist, axis=0)
+        ),
+        "eval_success_count": jnp.mean(jnp.sum(goal_reached, axis=0)),
         "eval_cost_return": jnp.mean(jnp.sum(cost, axis=0)),
+        "eval_time_at_goal_resampled": jnp.mean(goal_reached),
+        "eval_final_goal_dist_resampled": jnp.mean(resampled_goal_dist[-1]),
     }
-    for radius in EVAL_GOAL_RADII:
-        within = (goal_dist <= radius).astype(jnp.float32)
-        label = str(radius)
-        metrics[f"eval_time_within_{label}"] = jnp.mean(within)
+    for radius in EVAL_PRIMARY_GOAL_RADII:
+        within = (commanded_goal_dist <= radius).astype(jnp.float32)
+        label = _eval_radius_label(radius)
         metrics[f"eval_ever_within_{label}"] = jnp.mean(jnp.max(within, axis=0))
+    if frozen_goal_dist is not None:
+        frozen_goal_dist = jnp.asarray(frozen_goal_dist, dtype=jnp.float32)
+        for radius in (0.31, 0.5):
+            within = (frozen_goal_dist <= radius).astype(jnp.float32)
+            metrics[f"eval_frozen_time_within_{_eval_radius_label(radius)}"] = (
+                jnp.mean(within)
+            )
+        metrics["eval_frozen_final_dist"] = jnp.mean(frozen_goal_dist[-1])
     return metrics
 
 
-def make_deterministic_evaluator(
-    objects: TrainingObjects, config: TrainConfig
+def make_policy_evaluator(
+    objects: TrainingObjects, config: TrainConfig, *, std_scale: float = 0.0
 ) -> Callable[[Any, Array], Mapping[str, Array]]:
-    """Builds a full-episode deterministic actor-mean evaluator."""
+    """Builds a full-episode evaluator for deterministic or scaled-noise actions."""
 
     env_adapter = objects.env_adapter
 
     def evaluate_real(actor_params: Any, key: Array) -> Mapping[str, Array]:
         if env_adapter is None:
             raise ValueError("real-env evaluation requires objects.env_adapter")
-        eval_state, _ = env_adapter.reset(key)
+        key, reset_key = jax.random.split(key)
+        eval_state, _ = env_adapter.reset(reset_key)
+        initial_goal_xy = _real_goal_xy(env_adapter, eval_state)
+        initial_frozen_goal_xy = initial_goal_xy
+        initial_has_hit = jnp.zeros((config.num_envs,), dtype=bool)
 
-        def eval_step(env_state: Any, _: Array) -> tuple[Any, Mapping[str, Array]]:
+        def eval_step(
+            carry: tuple[Any, Array, Array, Array, Array], _: Array
+        ) -> tuple[tuple[Any, Array, Array, Array, Array], Mapping[str, Array]]:
+            (
+                env_state,
+                step_key,
+                first_goal_xy,
+                frozen_goal_xy,
+                has_hit,
+            ) = carry
+            step_key, action_key = jax.random.split(step_key)
             obs = _real_state_observation(env_adapter, env_state)
             goal = _real_rollout_goal(env_adapter, env_state, config)
-            action = _deterministic_action(
-                objects.actor, actor_params, obs, goal, config
+            goal_xy_before = _real_goal_xy(env_adapter, env_state)
+            action = _eval_action(
+                objects.actor,
+                actor_params,
+                obs,
+                goal,
+                action_key,
+                config,
+                std_scale=std_scale,
             )
             next_env_state, transition = env_adapter.step(env_state, action)
+            robot_xy_after = _real_robot_xy(env_adapter, next_env_state)
             reference = jnp.zeros((config.num_envs,), dtype=jnp.float32)
             cost = jnp.asarray(
                 transition.extras.get("cost", reference), dtype=jnp.float32
             )
-            return next_env_state, {
-                "goal_dist": jnp.asarray(
+            goal_reached = jnp.asarray(
+                transition.extras.get("goal_reached", reference),
+                dtype=jnp.float32,
+            )
+            new_hit = (goal_reached > 0.5) & ~has_hit
+            frozen_goal_xy = jnp.where(
+                new_hit[..., None], goal_xy_before, frozen_goal_xy
+            )
+            has_hit = has_hit | (goal_reached > 0.5)
+            frozen_measure_goal_xy = jnp.where(
+                has_hit[..., None], frozen_goal_xy, goal_xy_before
+            )
+            commanded_goal_dist = jnp.linalg.norm(
+                robot_xy_after - goal_xy_before, axis=-1
+            )
+            initial_goal_dist = jnp.linalg.norm(
+                robot_xy_after - first_goal_xy, axis=-1
+            )
+            frozen_goal_dist = jnp.linalg.norm(
+                robot_xy_after - frozen_measure_goal_xy, axis=-1
+            )
+            return (
+                next_env_state,
+                step_key,
+                first_goal_xy,
+                frozen_goal_xy,
+                has_hit,
+            ), {
+                "commanded_goal_dist": commanded_goal_dist,
+                "initial_goal_dist": initial_goal_dist,
+                "resampled_goal_dist": jnp.asarray(
                     transition.extras.get("goal_dist", reference), dtype=jnp.float32
                 ),
-                "goal_reached": jnp.asarray(
-                    transition.extras.get("goal_reached", reference),
-                    dtype=jnp.float32,
-                ),
+                "goal_reached": goal_reached,
                 "cost": cost,
+                "frozen_goal_dist": frozen_goal_dist,
             }
 
         _, trajectory = jax.lax.scan(
-            eval_step, eval_state, jnp.arange(config.env_episode_length)
+            eval_step,
+            (
+                eval_state,
+                key,
+                initial_goal_xy,
+                initial_frozen_goal_xy,
+                initial_has_hit,
+            ),
+            jnp.arange(config.env_episode_length),
         )
         return _eval_metrics(
-            trajectory["goal_dist"],
-            trajectory["goal_reached"],
-            trajectory["cost"],
+            commanded_goal_dist=trajectory["commanded_goal_dist"],
+            initial_goal_dist=trajectory["initial_goal_dist"],
+            resampled_goal_dist=trajectory["resampled_goal_dist"],
+            goal_reached=trajectory["goal_reached"],
+            cost=trajectory["cost"],
+            frozen_goal_dist=(
+                trajectory["frozen_goal_dist"]
+                if config.eval_freeze_goal_after_success
+                else None
+            ),
         )
 
     def evaluate_toy(actor_params: Any, key: Array) -> Mapping[str, Array]:
@@ -395,36 +558,56 @@ def make_deterministic_evaluator(
             carry: tuple[Array, ToyEnvState], _: Array
         ) -> tuple[tuple[Array, ToyEnvState], Mapping[str, Array]]:
             step_key, env_state = carry
-            step_key, env_key = jax.random.split(step_key)
+            step_key, env_key, action_key = jax.random.split(step_key, 3)
             goal = jnp.zeros((config.num_envs, config.goal_dim), dtype=jnp.float32)
-            action = _deterministic_action(
+            action = _eval_action(
                 objects.actor,
                 actor_params,
                 env_state.obs,
                 goal,
+                action_key,
                 config,
+                std_scale=std_scale,
             )
             next_env_state, transition = _toy_step(
                 env_state, action, env_key, config
             )
             return (step_key, next_env_state), {
-                "goal_dist": transition.extras["goal_dist"],
+                "commanded_goal_dist": transition.extras["goal_dist"],
+                "initial_goal_dist": transition.extras["goal_dist"],
+                "resampled_goal_dist": transition.extras["goal_dist"],
                 "goal_reached": transition.extras["goal_reached"],
                 "cost": transition.extras["cost"],
+                "frozen_goal_dist": transition.extras["goal_dist"],
             }
 
         _, trajectory = jax.lax.scan(
             eval_step, (key, eval_state), jnp.arange(config.env_episode_length)
         )
         return _eval_metrics(
-            trajectory["goal_dist"],
-            trajectory["goal_reached"],
-            trajectory["cost"],
+            commanded_goal_dist=trajectory["commanded_goal_dist"],
+            initial_goal_dist=trajectory["initial_goal_dist"],
+            resampled_goal_dist=trajectory["resampled_goal_dist"],
+            goal_reached=trajectory["goal_reached"],
+            cost=trajectory["cost"],
+            frozen_goal_dist=(
+                trajectory["frozen_goal_dist"]
+                if config.eval_freeze_goal_after_success
+                else None
+            ),
         )
 
     if env_adapter is not None:
         return jax.jit(evaluate_real)
     return jax.jit(evaluate_toy)
+
+
+def make_deterministic_evaluator(
+    objects: TrainingObjects, config: TrainConfig
+) -> Callable[[Any, Array], Mapping[str, Array]]:
+    """Builds a full-episode deterministic actor-mean evaluator."""
+
+    return make_policy_evaluator(objects, config, std_scale=0.0)
 
 
 def trace_deterministic_eval_goal_resampling(
@@ -1274,12 +1457,82 @@ def prefill_buffer(
     return run_prefill(state)
 
 
+def save_actor_checkpoint(path: str | Path, state: TrainState) -> Path:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(serialization.to_bytes(state.actor_params))
+    return output
+
+
+def load_actor_checkpoint(path: str | Path, target_actor_params: Any) -> Any:
+    return serialization.from_bytes(target_actor_params, Path(path).read_bytes())
+
+
 def _mean_float(metrics: Mapping[str, Array], key: str) -> float:
     return float(jnp.mean(metrics[key]))
 
 
 def _max_flag(metrics: Mapping[str, Array], key: str) -> int:
     return int(jnp.max(metrics[key]))
+
+
+def _format_eval_metrics_line(metrics: Mapping[str, Array]) -> str:
+    line = (
+        "         "
+        f"eval_ever_reached={_mean_float(metrics, 'eval_ever_reached'):.4f} "
+        f"eval_first_hit_time={_mean_float(metrics, 'eval_first_hit_time'):.2f} "
+        f"eval_min_goal_dist_initial_goal="
+        f"{_mean_float(metrics, 'eval_min_goal_dist_initial_goal'):.4f} "
+        f"eval_ever_within_0.31="
+        f"{_mean_float(metrics, 'eval_ever_within_0.31'):.4f} "
+        f"eval_ever_within_0.5="
+        f"{_mean_float(metrics, 'eval_ever_within_0.5'):.4f} "
+        f"eval_ever_within_1.0="
+        f"{_mean_float(metrics, 'eval_ever_within_1.0'):.4f} "
+        f"eval_ever_within_2.0="
+        f"{_mean_float(metrics, 'eval_ever_within_2.0'):.4f} "
+        f"eval_success_count={_mean_float(metrics, 'eval_success_count'):.4f} "
+        f"eval_cost_return={_mean_float(metrics, 'eval_cost_return'):.4f} "
+        f"eval_time_at_goal_resampled="
+        f"{_mean_float(metrics, 'eval_time_at_goal_resampled'):.4f} "
+        f"eval_final_goal_dist_resampled="
+        f"{_mean_float(metrics, 'eval_final_goal_dist_resampled'):.4f}"
+    )
+    if "eval_frozen_final_dist" in metrics:
+        line += (
+            " "
+            f"eval_frozen_time_within_0.31="
+            f"{_mean_float(metrics, 'eval_frozen_time_within_0.31'):.4f} "
+            f"eval_frozen_time_within_0.5="
+            f"{_mean_float(metrics, 'eval_frozen_time_within_0.5'):.4f} "
+            f"eval_frozen_final_dist="
+            f"{_mean_float(metrics, 'eval_frozen_final_dist'):.4f}"
+        )
+    mode_lines: list[str] = []
+    mode_suffixes = sorted(
+        key.removeprefix("eval_ever_reached")
+        for key in metrics
+        if key.startswith("eval_ever_reached_std")
+    )
+    for suffix in mode_suffixes:
+        mode_lines.append(
+            "         "
+            f"eval_ever_reached{suffix}="
+            f"{_mean_float(metrics, f'eval_ever_reached{suffix}'):.4f} "
+            f"eval_first_hit_time{suffix}="
+            f"{_mean_float(metrics, f'eval_first_hit_time{suffix}'):.2f} "
+            f"eval_min_goal_dist_initial_goal{suffix}="
+            f"{_mean_float(metrics, f'eval_min_goal_dist_initial_goal{suffix}'):.4f} "
+            f"eval_ever_within_0.31{suffix}="
+            f"{_mean_float(metrics, f'eval_ever_within_0.31{suffix}'):.4f} "
+            f"eval_success_count{suffix}="
+            f"{_mean_float(metrics, f'eval_success_count{suffix}'):.4f} "
+            f"eval_cost_return{suffix}="
+            f"{_mean_float(metrics, f'eval_cost_return{suffix}'):.4f}"
+        )
+    if mode_lines:
+        line = "\n".join([line, *mode_lines])
+    return line
 
 
 def format_epoch_metrics(
@@ -1403,27 +1656,7 @@ def format_epoch_metrics(
                 f"f_term={_mean_float(metrics, 'f_term_actor'):.3f} "
                 f"α_clip={_mean_float(metrics, 'alpha_clip'):.2f}]"
             ),
-            (
-                "         "
-                f"eval_time_at_goal={_mean_float(metrics, 'eval_time_at_goal'):.4f} "
-                f"eval_ever_reached={_mean_float(metrics, 'eval_ever_reached'):.4f} "
-                f"eval_min_goal_dist={_mean_float(metrics, 'eval_min_goal_dist'):.4f} "
-                f"eval_final_goal_dist="
-                f"{_mean_float(metrics, 'eval_final_goal_dist'):.4f} "
-                f"eval_time_within_0.5="
-                f"{_mean_float(metrics, 'eval_time_within_0.5'):.4f} "
-                f"eval_time_within_1.0="
-                f"{_mean_float(metrics, 'eval_time_within_1.0'):.4f} "
-                f"eval_time_within_2.0="
-                f"{_mean_float(metrics, 'eval_time_within_2.0'):.4f} "
-                f"eval_ever_within_0.5="
-                f"{_mean_float(metrics, 'eval_ever_within_0.5'):.4f} "
-                f"eval_ever_within_1.0="
-                f"{_mean_float(metrics, 'eval_ever_within_1.0'):.4f} "
-                f"eval_ever_within_2.0="
-                f"{_mean_float(metrics, 'eval_ever_within_2.0'):.4f} "
-                f"eval_cost_return={_mean_float(metrics, 'eval_cost_return'):.4f}"
-            ),
+            _format_eval_metrics_line(metrics),
         ]
     )
 
@@ -1482,7 +1715,11 @@ def run_training(
     state = prefill_buffer(state, objects, config)
     print_prefill_probe(state, print_fn)
     training_epoch = make_training_epoch(objects, config)
-    deterministic_eval = make_deterministic_evaluator(objects, config)
+    eval_std_scales = _parse_eval_std_scales(config.eval_action_std_scales)
+    policy_evaluators = tuple(
+        (std_scale, make_policy_evaluator(objects, config, std_scale=std_scale))
+        for std_scale in eval_std_scales
+    )
     eval_key = jax.random.fold_in(jax.random.PRNGKey(config.seed), 0x5EED)
 
     last_metrics: Mapping[str, Array] | None = None
@@ -1491,10 +1728,15 @@ def run_training(
         state, metrics = training_epoch(state)
         jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
         elapsed = time.perf_counter() - start
-        eval_key, epoch_eval_key = jax.random.split(eval_key)
-        eval_metrics = deterministic_eval(state.actor_params, epoch_eval_key)
-        jax.tree_util.tree_map(lambda x: x.block_until_ready(), eval_metrics)
-        metrics = {**metrics, **eval_metrics}
+        merged_eval_metrics: dict[str, Array] = {}
+        for std_scale, policy_evaluator in policy_evaluators:
+            eval_key, epoch_eval_key = jax.random.split(eval_key)
+            eval_metrics = policy_evaluator(state.actor_params, epoch_eval_key)
+            jax.tree_util.tree_map(lambda x: x.block_until_ready(), eval_metrics)
+            merged_eval_metrics.update(
+                _suffix_eval_metrics(eval_metrics, std_scale=std_scale)
+            )
+        metrics = {**metrics, **merged_eval_metrics}
         steps = int(state.step)
         print_fn(
             format_epoch_metrics(
@@ -1508,6 +1750,10 @@ def run_training(
         if epoch == 0:
             print_epoch1_forensics(metrics, print_fn)
         last_metrics = metrics
+
+    if config.checkpoint_output:
+        output_path = save_actor_checkpoint(config.checkpoint_output, state)
+        print_fn(f"CHECKPOINT_OUTPUT={output_path}")
 
     return {
         "state": state,
