@@ -339,6 +339,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert 'EPOCHS="${EPOCHS_OVERRIDE:-50}"' in source
     assert 'STEPS_PER_EPOCH="${STEPS_PER_EPOCH_OVERRIDE:-7}"' in source
     assert 'SGD_STEPS="${SGD_STEPS_OVERRIDE:-4}"' in source
+    assert 'NUM_BLOCK="${NUM_BLOCKS_OVERRIDE:-8}"' in source
     assert 'NU_C="${NU_C_OVERRIDE:-0.0003}"' in source
     assert 'ENTROPY_PARAM="${ENTROPY_PARAM_OVERRIDE:-0.5}"' in source
     assert (
@@ -402,6 +403,72 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "cost_resid=" in source
     assert "min_haz=" in source
     assert "min_vase=" in source
+
+
+def test_relxy_depth_pid_off_200epoch_sweeps_representation_depth() -> None:
+    source = Path("slurm/relxy_depth_pid_off_200epoch.sh").read_text()
+
+    assert "#SBATCH --array=0-11" in source
+    assert "#SBATCH --time=04:00:00" in source
+    assert "safe_relxy_depth_pidoff.%A_%a.out" in source
+    assert (
+        'DEPTH_LABELS=(\n    "pidoff_d2_seed0"\n'
+        '    "pidoff_d2_seed1"\n    "pidoff_d2_seed2"\n'
+        '    "pidoff_d4_seed0"\n    "pidoff_d4_seed1"\n'
+        '    "pidoff_d4_seed2"\n    "pidoff_d8_seed0"\n'
+        '    "pidoff_d8_seed1"\n    "pidoff_d8_seed2"\n'
+        '    "pidoff_d16_seed0"\n    "pidoff_d16_seed1"\n'
+        '    "pidoff_d16_seed2"\n)'
+    ) in source
+    assert (
+        'DEPTH_VALUES=("2" "2" "2" "4" "4" "4" "8" "8" "8" '
+        '"16" "16" "16")'
+    ) in source
+    assert 'SEED_VALUES=("0" "1" "2" "0" "1" "2" "0" "1" "2" "0" "1" "2")' in source
+    assert "export NUM_BLOCKS_OVERRIDE=" in source
+    assert "export EPOCHS_OVERRIDE=200" in source
+    assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export NU_C_OVERRIDE=0.0003" in source
+    assert "export PID_KP_OVERRIDE=0.0" in source
+    assert "export PID_KI_OVERRIDE=0.0" in source
+    assert "export COST_RETURN_LOSS_WEIGHT_OVERRIDE=0.0" in source
+    assert "export EVAL_FREEZE_GOAL_AFTER_SUCCESS_OVERRIDE=true" in source
+    assert "export EVAL_ACTION_STD_SCALES_OVERRIDE=0.0" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
+
+
+def test_relxy_depth_cmdp_200epoch_sweeps_safety_depth() -> None:
+    source = Path("slurm/relxy_depth_cmdp_200epoch.sh").read_text()
+
+    assert "#SBATCH --array=0-11" in source
+    assert "#SBATCH --time=04:00:00" in source
+    assert "safe_relxy_depth_cmdp.%A_%a.out" in source
+    assert (
+        'DEPTH_LABELS=(\n    "cmdp_d2_seed0"\n'
+        '    "cmdp_d2_seed1"\n    "cmdp_d2_seed2"\n'
+        '    "cmdp_d4_seed0"\n    "cmdp_d4_seed1"\n'
+        '    "cmdp_d4_seed2"\n    "cmdp_d8_seed0"\n'
+        '    "cmdp_d8_seed1"\n    "cmdp_d8_seed2"\n'
+        '    "cmdp_d16_seed0"\n    "cmdp_d16_seed1"\n'
+        '    "cmdp_d16_seed2"\n)'
+    ) in source
+    assert (
+        'DEPTH_VALUES=("2" "2" "2" "4" "4" "4" "8" "8" "8" '
+        '"16" "16" "16")'
+    ) in source
+    assert "export NUM_BLOCKS_OVERRIDE=" in source
+    assert "export EPOCHS_OVERRIDE=200" in source
+    assert "export SGD_STEPS_OVERRIDE=64" in source
+    assert "export NU_C_OVERRIDE=0.003" in source
+    assert "export PID_KP_OVERRIDE=5.0" in source
+    assert "export PID_KI_OVERRIDE=0.01" in source
+    assert "export PID_INTEGRAL_DECAY_OVERRIDE=0.95" in source
+    assert "export COST_RETURN_LOSS_WEIGHT_OVERRIDE=1.0" in source
+    assert "export EVAL_FREEZE_GOAL_AFTER_SUCCESS_OVERRIDE=true" in source
+    assert "export EVAL_ACTION_STD_SCALES_OVERRIDE=0.0" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
 
 
 def test_relxy_cmdp_sweep_reuses_reference_relative_xy_arm() -> None:
