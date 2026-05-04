@@ -135,6 +135,11 @@ FIELDNAMES = (
     "actor_qc_rank_mean_risk025",
     "actor_qc_percentile_risk025",
     "q_c_action_spread_risk025",
+    "cost_risk_replay_ratio_actual",
+    "cost_risky_batch_frac",
+    "cost_risky_available_frac",
+    "cost_risky_batch_mean_cost",
+    "cost_uniform_batch_mean_cost",
     *EVAL_METRIC_KEYS,
 )
 
@@ -162,6 +167,10 @@ def parse_log(path: Path) -> dict[str, str]:
             if parsed:
                 last_metrics = parsed
         elif "action_rank[" in line:
+            parsed = _parse_assignments(line)
+            if parsed:
+                last_metrics.update(parsed)
+        elif "cost_replay[" in line:
             parsed = _parse_assignments(line)
             if parsed:
                 last_metrics.update(parsed)
@@ -241,6 +250,19 @@ def parse_log(path: Path) -> dict[str, str]:
         ),
         "q_c_action_spread_risk025": last_metrics.get(
             "q_c_action_spread_risk025", ""
+        ),
+        "cost_risk_replay_ratio_actual": last_metrics.get(
+            "cost_risk_replay_ratio_actual", ""
+        ),
+        "cost_risky_batch_frac": last_metrics.get("cost_risky_batch_frac", ""),
+        "cost_risky_available_frac": last_metrics.get(
+            "cost_risky_available_frac", ""
+        ),
+        "cost_risky_batch_mean_cost": last_metrics.get(
+            "cost_risky_batch_mean_cost", ""
+        ),
+        "cost_uniform_batch_mean_cost": last_metrics.get(
+            "cost_uniform_batch_mean_cost", ""
         ),
     }
     for key in METRIC_KEYS:

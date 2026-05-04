@@ -371,6 +371,7 @@ def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
 
 def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_limit == 0.0001
+    assert TrainConfig().cost_risk_replay_ratio == 0.0
 
 
 def test_run_training_prints_required_probe_sections() -> None:
@@ -512,6 +513,11 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "actor_qc_percentile_risk025": jnp.asarray([0.4]),
         "q_c_action_spread_risk025": jnp.asarray([0.7]),
         "best_qc_action_is_actor_frac_risk025": jnp.asarray([0.1]),
+        "cost_risk_replay_ratio_actual": jnp.asarray([0.25]),
+        "cost_risky_batch_frac": jnp.asarray([0.375]),
+        "cost_risky_available_frac": jnp.asarray([0.125]),
+        "cost_risky_batch_mean_cost": jnp.asarray([0.08]),
+        "cost_uniform_batch_mean_cost": jnp.asarray([0.02]),
         "nu_c": jnp.asarray([0.01]),
         "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
@@ -618,6 +624,11 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "actor_qc_rank_mean_risk025=6.00" in text
     assert "actor_qc_percentile_risk025=0.400" in text
     assert "q_c_action_spread_risk025=7.00e-01" in text
+    assert "cost_replay[ cost_risk_replay_ratio_actual=0.250" in text
+    assert "cost_risky_batch_frac=0.375" in text
+    assert "cost_risky_available_frac=0.125" in text
+    assert "cost_risky_batch_mean_cost=0.0800" in text
+    assert "cost_uniform_batch_mean_cost=0.0200" in text
     assert "nu_c=1.0e-02" in text
     assert "eval_ever_reached=0.2000" in text
     assert "eval_first_hit_time=12.00" in text

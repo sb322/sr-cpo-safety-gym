@@ -49,6 +49,13 @@ def test_parse_log_uses_last_hard_violation_line(tmp_path: Path) -> None:
                     "q_c_action_spread_risk025=7.00e-01]"
                 ),
                 (
+                    "cost_replay[ cost_risk_replay_ratio_actual=0.250 "
+                    "cost_risky_batch_frac=0.375 "
+                    "cost_risky_available_frac=0.125 "
+                    "cost_risky_batch_mean_cost=0.0800 "
+                    "cost_uniform_batch_mean_cost=0.0200]"
+                ),
+                (
                     "eval_ever_reached=0.9961 eval_first_hit_time=110.02 "
                     "eval_min_goal_dist_initial_goal=0.1160 "
                     "eval_ever_within_0.31=0.9961 eval_ever_within_0.5=0.9961 "
@@ -89,6 +96,11 @@ def test_parse_log_uses_last_hard_violation_line(tmp_path: Path) -> None:
     assert row["actor_qc_rank_mean_risk1"] == "4.00"
     assert row["actor_qc_percentile_risk05"] == "0.300"
     assert row["q_c_action_spread_risk025"] == "7.00e-01"
+    assert row["cost_risk_replay_ratio_actual"] == "0.250"
+    assert row["cost_risky_batch_frac"] == "0.375"
+    assert row["cost_risky_available_frac"] == "0.125"
+    assert row["cost_risky_batch_mean_cost"] == "0.0800"
+    assert row["cost_uniform_batch_mean_cost"] == "0.0200"
     assert row["eval_ever_reached"] == "0.9961"
     assert row["eval_first_hit_time"] == "110.02"
     assert row["eval_success_count"] == "10.3008"

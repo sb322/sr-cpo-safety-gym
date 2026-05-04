@@ -346,6 +346,11 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
         'COST_RETURN_LOSS_WEIGHT="${COST_RETURN_LOSS_WEIGHT_OVERRIDE:-0.0}"'
         in source
     )
+    assert 'COST_RISK_REPLAY_RATIO="${COST_RISK_REPLAY_RATIO_OVERRIDE:-0.0}"' in source
+    assert (
+        'COST_RISK_HAZARD_LIDAR_THRESH="${COST_RISK_HAZARD_LIDAR_THRESH_OVERRIDE:-0.5}"'
+        in source
+    )
     assert 'COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"' in source
     assert 'PID_KP="${PID_KP_OVERRIDE:-5.0}"' in source
     assert 'PID_KI="${PID_KI_OVERRIDE:-0.1}"' in source
@@ -357,6 +362,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     )
     assert "--probe-counterfactual-costs" in source
     assert '--cost-return-loss-weight "$COST_RETURN_LOSS_WEIGHT"' in source
+    assert '--cost-risk-replay-ratio "$COST_RISK_REPLAY_RATIO"' in source
     assert "cost_return_loss_weight" in source
     assert "Qc-Jc=" in source
     assert "pid_integral_decay" in source

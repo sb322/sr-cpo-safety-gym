@@ -41,7 +41,9 @@ from sr_cpo.replay_buffer import (
     ReplayBuffer,
     insert_trajectory,
     make_replay_buffer,
+    replay_risky_available_fraction,
     sample_hindsight_transitions,
+    sample_risk_biased_hindsight_transitions,
 )
 
 Array = jax.Array
@@ -93,6 +95,9 @@ class TrainConfig:
     critic_score_mode: str = "cosine"
     gamma_c: float = 0.99
     cost_return_loss_weight: float = 0.0
+    cost_risk_replay_ratio: float = 0.0
+    cost_risk_hazard_lidar_thresh: float = 0.5
+    cost_risk_min_fraction_available: float = 0.0
     target_update_rate: float = 0.005
     nu_f: float = 1.0
     nu_c: float = 1.0
@@ -987,9 +992,15 @@ def _sgd_step(
     objects: TrainingObjects,
     config: TrainConfig,
 ) -> tuple[TrainState, dict[str, Array]]:
-    key, sample_key, actor_key, cost_key, alpha_key, dual_key = jax.random.split(
-        train_state.key, 6
-    )
+    (
+        key,
+        sample_key,
+        cost_sample_key,
+        actor_key,
+        cost_key,
+        alpha_key,
+        dual_key,
+    ) = jax.random.split(train_state.key, 7)
     batch = sample_hindsight_transitions(
         train_state.replay,
         sample_key,
@@ -1003,6 +1014,39 @@ def _sgd_step(
         batch.extras["goal"], config.goal_dim, context="hindsight critic"
     )
     batch = _mask_transition_state_inputs(batch, config)
+    if config.cost_risk_replay_ratio > 0.0:
+        cost_batch, cost_risk_aux = sample_risk_biased_hindsight_transitions(
+            train_state.replay,
+            cost_sample_key,
+            batch_size=config.batch_size,
+            risk_ratio=config.cost_risk_replay_ratio,
+            hazard_lidar_threshold=config.cost_risk_hazard_lidar_thresh,
+            min_fraction_available=config.cost_risk_min_fraction_available,
+            goal_start=config.goal_start,
+            goal_end=config.goal_start + config.goal_dim,
+            relative_goal=config.goal_mode == "relative_xy",
+            cost_return_gamma=config.gamma_c,
+        )
+        _assert_goal_shape(
+            cost_batch.extras["goal"], config.goal_dim, context="cost critic"
+        )
+        cost_batch = _mask_transition_state_inputs(cost_batch, config)
+    else:
+        batch_hard = jnp.asarray(batch.extras["hard_violation"], dtype=jnp.float32)
+        batch_cost = jnp.asarray(batch.extras["cost"], dtype=jnp.float32)
+        cost_batch = batch
+        cost_risk_aux = {
+            "cost_risk_replay_ratio_actual": jnp.asarray(0.0, dtype=jnp.float32),
+            "cost_risky_batch_frac": jnp.mean(
+                ((batch_hard > 0.5) | (batch_cost > 0.0)).astype(jnp.float32)
+            ),
+            "cost_risky_available_frac": replay_risky_available_fraction(
+                train_state.replay,
+                hazard_lidar_threshold=config.cost_risk_hazard_lidar_thresh,
+            ),
+            "cost_risky_batch_mean_cost": jnp.asarray(0.0, dtype=jnp.float32),
+            "cost_uniform_batch_mean_cost": jnp.mean(batch_cost),
+        }
 
     def critic_objective(params: Any) -> tuple[Array, dict[str, Array]]:
         return critic_loss_fn(
@@ -1055,7 +1099,7 @@ def _sgd_step(
             params,
             train_state.cost_critic_target_params,
             actor_params,
-            batch,
+            cost_batch,
             cost_key,
             actor=objects.actor,
             cost_critic=objects.cost_critic,
@@ -1143,6 +1187,17 @@ def _sgd_step(
         "cc_loss": cc_loss,
         "cc_td_loss": cc_aux["cost_critic_td_loss"],
         "cc_return_loss": cc_aux["cost_return_loss"],
+        "cost_risk_replay_ratio_actual": cost_risk_aux[
+            "cost_risk_replay_ratio_actual"
+        ],
+        "cost_risky_batch_frac": cost_risk_aux["cost_risky_batch_frac"],
+        "cost_risky_available_frac": cost_risk_aux["cost_risky_available_frac"],
+        "cost_risky_batch_mean_cost": cost_risk_aux[
+            "cost_risky_batch_mean_cost"
+        ],
+        "cost_uniform_batch_mean_cost": cost_risk_aux[
+            "cost_uniform_batch_mean_cost"
+        ],
         "alpha_loss": alpha_loss,
         "nan_obs_critic": c_aux["nan_obs"],
         "nan_sa_critic": c_aux["nan_sa"],
@@ -1351,6 +1406,12 @@ def initialize_training(
         raise ValueError("xy goal modes require goal_dim=2")
     if config.critic_score_mode not in {"cosine", "l2"}:
         raise ValueError("critic_score_mode must be 'cosine' or 'l2'")
+    if not 0.0 <= config.cost_risk_replay_ratio <= 1.0:
+        raise ValueError("cost_risk_replay_ratio must be in [0, 1]")
+    if config.cost_risk_hazard_lidar_thresh <= 0.0:
+        raise ValueError("cost_risk_hazard_lidar_thresh must be positive")
+    if config.cost_risk_min_fraction_available < 0.0:
+        raise ValueError("cost_risk_min_fraction_available must be non-negative")
     key = jax.random.PRNGKey(config.seed)
     (
         key,
@@ -1704,6 +1765,19 @@ def format_epoch_metrics(
                 f"{_mean_float(metrics, 'actor_qc_percentile_risk025'):.3f} "
                 f"q_c_action_spread_risk025="
                 f"{_mean_float(metrics, 'q_c_action_spread_risk025'):.2e}]"
+            ),
+            (
+                "         "
+                f"cost_replay[ cost_risk_replay_ratio_actual="
+                f"{_mean_float(metrics, 'cost_risk_replay_ratio_actual'):.3f} "
+                f"cost_risky_batch_frac="
+                f"{_mean_float(metrics, 'cost_risky_batch_frac'):.3f} "
+                f"cost_risky_available_frac="
+                f"{_mean_float(metrics, 'cost_risky_available_frac'):.3f} "
+                f"cost_risky_batch_mean_cost="
+                f"{_mean_float(metrics, 'cost_risky_batch_mean_cost'):.4f} "
+                f"cost_uniform_batch_mean_cost="
+                f"{_mean_float(metrics, 'cost_uniform_batch_mean_cost'):.4f}]"
             ),
             (
                 "         "
