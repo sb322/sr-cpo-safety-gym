@@ -107,6 +107,20 @@ FIELDNAMES = (
     "lambda_tilde",
     "qc",
     "lambda_qc_a",
+    "qc_actor",
+    "reward_actor_term",
+    "qc_action_delta",
+    "qc_action_gap",
+    "qc_action_delta_frac_pos",
+    "grad_norm_qr_a",
+    "grad_norm_qc_a",
+    "lambda_grad_norm_qc_a",
+    "grad_ratio_cost_reward",
+    "cosine_grad_qr_qc",
+    "risk_condition_fraction",
+    "qc_actor_risky",
+    "qc_action_delta_risky",
+    "grad_ratio_cost_reward_risky",
     *EVAL_METRIC_KEYS,
 )
 
@@ -160,6 +174,22 @@ def parse_log(path: Path) -> dict[str, str]:
         "lambda_tilde": last_metrics.get("λ̃", ""),
         "qc": last_metrics.get("Qc", ""),
         "lambda_qc_a": last_metrics.get("λQc_a", ""),
+        "qc_actor": last_metrics.get("Qc_a", ""),
+        "reward_actor_term": last_metrics.get("r_term", ""),
+        "qc_action_delta": last_metrics.get(
+            "dQc_a0", last_metrics.get("ΔQc_a0", "")
+        ),
+        "qc_action_gap": last_metrics.get("abs_dQc_a0", ""),
+        "qc_action_delta_frac_pos": last_metrics.get("frac_dQc_pos", ""),
+        "grad_norm_qr_a": last_metrics.get("dQr_da", ""),
+        "grad_norm_qc_a": last_metrics.get("dQc_da", ""),
+        "lambda_grad_norm_qc_a": last_metrics.get("lambda_dQc_da", ""),
+        "grad_ratio_cost_reward": last_metrics.get("grad_ratio", ""),
+        "cosine_grad_qr_qc": last_metrics.get("cos_qr_qc", ""),
+        "risk_condition_fraction": last_metrics.get("risk_frac", ""),
+        "qc_actor_risky": last_metrics.get("Qc_risk", ""),
+        "qc_action_delta_risky": last_metrics.get("dQc_risk", ""),
+        "grad_ratio_cost_reward_risky": last_metrics.get("grad_ratio_risk", ""),
     }
     for key in METRIC_KEYS:
         if key in ("λ̃", "Qc", "λQc_a"):

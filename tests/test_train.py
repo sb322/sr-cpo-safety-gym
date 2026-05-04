@@ -477,12 +477,24 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "sat_correction_actor": jnp.asarray([1.0]),
         "log_std_mean_actor": jnp.asarray([0.0]),
         "f_term_actor": jnp.asarray([0.5]),
+        "reward_actor_term": jnp.asarray([-0.5]),
         "qc_actor": jnp.asarray([0.25]),
         "qc_zero_action_actor": jnp.asarray([0.2]),
         "qc_neg_action_actor": jnp.asarray([0.3]),
+        "qc_action_delta_actor": jnp.asarray([0.05]),
         "qc_action_gap_actor": jnp.asarray([0.05]),
+        "qc_action_delta_frac_pos_actor": jnp.asarray([0.75]),
         "qc_actor_std": jnp.asarray([0.01]),
         "lambda_qc_actor": jnp.asarray([0.125]),
+        "grad_norm_qr_actor": jnp.asarray([2.0]),
+        "grad_norm_qc_actor": jnp.asarray([0.5]),
+        "lambda_grad_norm_qc_actor": jnp.asarray([0.25]),
+        "grad_ratio_cost_reward_actor": jnp.asarray([0.125]),
+        "cosine_grad_qr_qc_actor": jnp.asarray([-0.25]),
+        "risk_condition_frac_actor": jnp.asarray([0.5]),
+        "qc_actor_risky": jnp.asarray([0.4]),
+        "qc_action_delta_risky_actor": jnp.asarray([0.07]),
+        "grad_ratio_cost_reward_risky_actor": jnp.asarray([0.2]),
         "nu_c": jnp.asarray([0.01]),
         "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
@@ -559,7 +571,22 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "Jc_mc=0.7500" in text
     assert "Qc-Jc=-0.7500" in text
     assert "mcw=1.0e+00" in text
+    assert "Qc_a=0.2500" in text
+    assert "ΔQc_a0=5.00e-02" in text
+    assert "dQc_a0=5.00e-02" in text
+    assert "abs_dQc_a0=5.00e-02" in text
+    assert "frac_dQc_pos=0.750" in text
     assert "λQc_a=1.25e-01" in text
+    assert "r_term=-0.500" in text
+    assert "dQr_da=2.00e+00" in text
+    assert "dQc_da=5.00e-01" in text
+    assert "lambda_dQc_da=2.50e-01" in text
+    assert "grad_ratio=1.25e-01" in text
+    assert "cos_qr_qc=-0.250" in text
+    assert "risk_frac=0.500" in text
+    assert "Qc_risk=0.4000" in text
+    assert "dQc_risk=7.00e-02" in text
+    assert "grad_ratio_risk=2.00e-01" in text
     assert "nu_c=1.0e-02" in text
     assert "eval_ever_reached=0.2000" in text
     assert "eval_first_hit_time=12.00" in text

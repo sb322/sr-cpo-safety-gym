@@ -98,6 +98,7 @@ def _actor_setup(
             "goal": goal,
             "next_state": next_state,
             "cost": cost,
+            "hard_violation": (cost > 0.0).astype(jnp.float32),
         },
     )
     actor = Actor(action_size=action_dim)
@@ -235,6 +236,22 @@ def test_actor_loss_forward_and_grad_finite_on_random_batch() -> None:
     assert bool(jnp.isfinite(probes["qc_actor_mean"]))
     assert "qc_action_gap_mean" in probes
     assert bool(jnp.isfinite(probes["qc_action_gap_mean"]))
+    for key in (
+        "reward_actor_term_mean",
+        "qc_action_delta_mean",
+        "qc_action_delta_frac_pos",
+        "grad_norm_qr_a",
+        "grad_norm_qc_a",
+        "lambda_grad_norm_qc_a",
+        "grad_ratio_cost_reward",
+        "cosine_grad_qr_qc",
+        "risk_condition_fraction",
+        "qc_actor_risky_mean",
+        "qc_action_delta_risky_mean",
+        "grad_ratio_cost_reward_risky",
+    ):
+        assert key in probes
+        assert bool(jnp.isfinite(probes[key]))
 
 
 def test_actor_loss_supports_reference_l2_scores() -> None:

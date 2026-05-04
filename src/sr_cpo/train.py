@@ -1164,12 +1164,26 @@ def _sgd_step(
         "sat_correction_actor": a_aux["sat_correction_mean"],
         "log_std_mean_actor": a_aux["log_std_mean"],
         "f_term_actor": a_aux["f_term_mean"],
+        "reward_actor_term": a_aux["reward_actor_term_mean"],
         "qc_actor": a_aux["qc_actor_mean"],
         "qc_zero_action_actor": a_aux["qc_zero_action_mean"],
         "qc_neg_action_actor": a_aux["qc_neg_action_mean"],
+        "qc_action_delta_actor": a_aux["qc_action_delta_mean"],
         "qc_action_gap_actor": a_aux["qc_action_gap_mean"],
+        "qc_action_delta_frac_pos_actor": a_aux["qc_action_delta_frac_pos"],
         "qc_actor_std": a_aux["qc_actor_std"],
         "lambda_qc_actor": a_aux["constraint_term_mean"],
+        "grad_norm_qr_actor": a_aux["grad_norm_qr_a"],
+        "grad_norm_qc_actor": a_aux["grad_norm_qc_a"],
+        "lambda_grad_norm_qc_actor": a_aux["lambda_grad_norm_qc_a"],
+        "grad_ratio_cost_reward_actor": a_aux["grad_ratio_cost_reward"],
+        "cosine_grad_qr_qc_actor": a_aux["cosine_grad_qr_qc"],
+        "risk_condition_frac_actor": a_aux["risk_condition_fraction"],
+        "qc_actor_risky": a_aux["qc_actor_risky_mean"],
+        "qc_action_delta_risky_actor": a_aux["qc_action_delta_risky_mean"],
+        "grad_ratio_cost_reward_risky_actor": a_aux[
+            "grad_ratio_cost_reward_risky"
+        ],
         "nu_c": jnp.asarray(config.nu_c, dtype=jnp.float32),
         "entropy_param": jnp.asarray(config.entropy_param, dtype=jnp.float32),
         "target_entropy": -jnp.asarray(
@@ -1605,14 +1619,34 @@ def format_epoch_metrics(
                 f"S={_mean_float(metrics, 'pid_integral'):.2e} "
                 f"Sdecay={_mean_float(metrics, 'pid_integral_decay'):.2f} "
                 f"λraw={_mean_float(metrics, 'pid_raw_lambda'):.2e} "
+                f"Qc_a={_mean_float(metrics, 'qc_actor'):.4f} "
                 f"Qc0={_mean_float(metrics, 'qc_zero_action_actor'):.4f} "
                 f"Qc-={_mean_float(metrics, 'qc_neg_action_actor'):.4f} "
                 f"Jc_mc={_mean_float(metrics, 'cost_return'):.4f} "
                 f"Qc-Jc={_mean_float(metrics, 'qc_return_error'):.4f} "
                 f"mcw={_mean_float(metrics, 'cost_return_loss_weight'):.1e} "
-                f"ΔQc_a0={_mean_float(metrics, 'qc_action_gap_actor'):.2e} "
+                f"ΔQc_a0={_mean_float(metrics, 'qc_action_delta_actor'):.2e} "
+                f"dQc_a0={_mean_float(metrics, 'qc_action_delta_actor'):.2e} "
+                f"abs_dQc_a0={_mean_float(metrics, 'qc_action_gap_actor'):.2e} "
+                f"frac_dQc_pos="
+                f"{_mean_float(metrics, 'qc_action_delta_frac_pos_actor'):.3f} "
                 f"Qcstd={_mean_float(metrics, 'qc_actor_std'):.2e} "
                 f"λQc_a={_mean_float(metrics, 'lambda_qc_actor'):.2e} "
+                f"r_term={_mean_float(metrics, 'reward_actor_term'):.3f} "
+                f"dQr_da={_mean_float(metrics, 'grad_norm_qr_actor'):.2e} "
+                f"dQc_da={_mean_float(metrics, 'grad_norm_qc_actor'):.2e} "
+                f"lambda_dQc_da="
+                f"{_mean_float(metrics, 'lambda_grad_norm_qc_actor'):.2e} "
+                f"grad_ratio="
+                f"{_mean_float(metrics, 'grad_ratio_cost_reward_actor'):.2e} "
+                f"cos_qr_qc="
+                f"{_mean_float(metrics, 'cosine_grad_qr_qc_actor'):.3f} "
+                f"risk_frac={_mean_float(metrics, 'risk_condition_frac_actor'):.3f} "
+                f"Qc_risk={_mean_float(metrics, 'qc_actor_risky'):.4f} "
+                f"dQc_risk="
+                f"{_mean_float(metrics, 'qc_action_delta_risky_actor'):.2e} "
+                f"grad_ratio_risk="
+                f"{_mean_float(metrics, 'grad_ratio_cost_reward_risky_actor'):.2e} "
                 f"nu_c={_mean_float(metrics, 'nu_c'):.1e}"
             ),
             (

@@ -228,12 +228,62 @@ def actor_loss_fn(
     qc_neg_action = cost_critic.apply(
         cost_critic_params, state, -sample.action, goal_arr
     )
+    reward_actor_term = -f_value / nu_f
+    qc_action_delta = qc_value - qc_zero_action
     constraint_term = lambda_tilde * qc_value / nu_c
     loss = jnp.mean(
         alpha * sample.log_prob
-        - f_value / nu_f
+        + reward_actor_term
         + constraint_term
     )
+
+    def reward_score_for_action(action: Array) -> Array:
+        sa_repr_for_action = sa_encoder.apply(
+            critic_params["sa_encoder"], state, action
+        )
+        g_repr_for_action = g_encoder.apply(critic_params["g_encoder"], goal_arr)
+        return _paired_scores(
+            sa_repr_for_action,
+            g_repr_for_action,
+            tau=tau,
+            score_mode=score_mode,
+        ) / nu_f
+
+    def cost_score_for_action(action: Array) -> Array:
+        return cost_critic.apply(cost_critic_params, state, action, goal_arr)
+
+    grad_qr = jax.grad(lambda action: jnp.sum(reward_score_for_action(action)))(
+        sample.action
+    )
+    grad_qc = jax.grad(lambda action: jnp.sum(cost_score_for_action(action)))(
+        sample.action
+    )
+    grad_norm_qr_rows = jnp.linalg.norm(grad_qr, axis=-1)
+    grad_norm_qc_rows = jnp.linalg.norm(grad_qc, axis=-1)
+    grad_norm_qr = jnp.mean(grad_norm_qr_rows)
+    grad_norm_qc = jnp.mean(grad_norm_qc_rows)
+    lambda_scale = jnp.abs(lambda_tilde / nu_c)
+    lambda_grad_norm_qc_rows = lambda_scale * grad_norm_qc_rows
+    lambda_grad_norm_qc = jnp.mean(lambda_grad_norm_qc_rows)
+    grad_ratio_rows = lambda_grad_norm_qc_rows / (grad_norm_qr_rows + 1e-8)
+    grad_ratio = jnp.mean(grad_ratio_rows)
+    cosine_grad_qr_qc_rows = jnp.sum(grad_qr * grad_qc, axis=-1) / (
+        grad_norm_qr_rows * grad_norm_qc_rows + 1e-8
+    )
+    cosine_grad_qr_qc = jnp.mean(cosine_grad_qr_qc_rows)
+
+    extras = _extras(transitions)
+    reference = jnp.zeros_like(qc_value)
+    hard_violation = jnp.asarray(
+        extras.get("hard_violation", reference), dtype=jnp.float32
+    )
+    cost_sample = jnp.asarray(extras.get("cost", reference), dtype=jnp.float32)
+    risk_mask = jnp.logical_or(hard_violation > 0.5, cost_sample > 0.0)
+    risk_weight = risk_mask.astype(jnp.float32)
+    risk_denom = jnp.maximum(jnp.sum(risk_weight), 1.0)
+
+    def risky_mean(x: Array) -> Array:
+        return jnp.sum(jnp.asarray(x, dtype=jnp.float32) * risk_weight) / risk_denom
 
     probes = {
         "alpha": alpha,
@@ -243,12 +293,26 @@ def actor_loss_fn(
         "sat_correction_mean": jnp.mean(sample.sat_correction),
         "log_std_mean": jnp.mean(sample.log_std),
         "f_term_mean": jnp.mean(f_value) / nu_f,
+        "reward_actor_term_mean": jnp.mean(reward_actor_term),
         "qc_actor_mean": jnp.mean(qc_value),
         "qc_zero_action_mean": jnp.mean(qc_zero_action),
         "qc_neg_action_mean": jnp.mean(qc_neg_action),
+        "qc_action_delta_mean": jnp.mean(qc_action_delta),
         "qc_action_gap_mean": jnp.mean(jnp.abs(qc_value - qc_zero_action)),
+        "qc_action_delta_frac_pos": jnp.mean(
+            (qc_action_delta > 0.0).astype(jnp.float32)
+        ),
         "qc_actor_std": jnp.std(qc_value),
         "constraint_term_mean": jnp.mean(constraint_term),
+        "grad_norm_qr_a": grad_norm_qr,
+        "grad_norm_qc_a": grad_norm_qc,
+        "lambda_grad_norm_qc_a": lambda_grad_norm_qc,
+        "grad_ratio_cost_reward": grad_ratio,
+        "cosine_grad_qr_qc": cosine_grad_qr_qc,
+        "risk_condition_fraction": jnp.mean(risk_weight),
+        "qc_actor_risky_mean": risky_mean(qc_value),
+        "qc_action_delta_risky_mean": risky_mean(qc_action_delta),
+        "grad_ratio_cost_reward_risky": risky_mean(grad_ratio_rows),
         "nan_sa": _has_nonfinite(sa_repr),
         "nan_g": _has_nonfinite(g_repr),
         "nan_action": _has_nonfinite(sample.action),
