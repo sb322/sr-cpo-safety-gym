@@ -1184,6 +1184,31 @@ def _sgd_step(
         "grad_ratio_cost_reward_risky_actor": a_aux[
             "grad_ratio_cost_reward_risky"
         ],
+        "actor_qc_rank_mean": a_aux["actor_qc_rank_mean"],
+        "actor_qc_percentile": a_aux["actor_qc_percentile"],
+        "q_c_action_spread": a_aux["q_c_action_spread"],
+        "best_qc_action_is_actor_frac": a_aux["best_qc_action_is_actor_frac"],
+        "action_rank_hazard_available_frac": a_aux[
+            "action_rank_hazard_available_frac"
+        ],
+        "actor_qc_rank_mean_risk1": a_aux["actor_qc_rank_mean_risk1"],
+        "actor_qc_percentile_risk1": a_aux["actor_qc_percentile_risk1"],
+        "q_c_action_spread_risk1": a_aux["q_c_action_spread_risk1"],
+        "best_qc_action_is_actor_frac_risk1": a_aux[
+            "best_qc_action_is_actor_frac_risk1"
+        ],
+        "actor_qc_rank_mean_risk05": a_aux["actor_qc_rank_mean_risk05"],
+        "actor_qc_percentile_risk05": a_aux["actor_qc_percentile_risk05"],
+        "q_c_action_spread_risk05": a_aux["q_c_action_spread_risk05"],
+        "best_qc_action_is_actor_frac_risk05": a_aux[
+            "best_qc_action_is_actor_frac_risk05"
+        ],
+        "actor_qc_rank_mean_risk025": a_aux["actor_qc_rank_mean_risk025"],
+        "actor_qc_percentile_risk025": a_aux["actor_qc_percentile_risk025"],
+        "q_c_action_spread_risk025": a_aux["q_c_action_spread_risk025"],
+        "best_qc_action_is_actor_frac_risk025": a_aux[
+            "best_qc_action_is_actor_frac_risk025"
+        ],
         "nu_c": jnp.asarray(config.nu_c, dtype=jnp.float32),
         "entropy_param": jnp.asarray(config.entropy_param, dtype=jnp.float32),
         "target_entropy": -jnp.asarray(
@@ -1648,6 +1673,37 @@ def format_epoch_metrics(
                 f"grad_ratio_risk="
                 f"{_mean_float(metrics, 'grad_ratio_cost_reward_risky_actor'):.2e} "
                 f"nu_c={_mean_float(metrics, 'nu_c'):.1e}"
+            ),
+            (
+                "         "
+                f"action_rank[ actor_qc_rank_mean="
+                f"{_mean_float(metrics, 'actor_qc_rank_mean'):.2f} "
+                f"actor_qc_percentile="
+                f"{_mean_float(metrics, 'actor_qc_percentile'):.3f} "
+                f"q_c_action_spread="
+                f"{_mean_float(metrics, 'q_c_action_spread'):.2e} "
+                f"best_qc_action_is_actor_frac="
+                f"{_mean_float(metrics, 'best_qc_action_is_actor_frac'):.3f} "
+                f"hazard_rank_bins_available="
+                f"{_mean_float(metrics, 'action_rank_hazard_available_frac'):.3f} "
+                f"actor_qc_rank_mean_risk1="
+                f"{_mean_float(metrics, 'actor_qc_rank_mean_risk1'):.2f} "
+                f"actor_qc_percentile_risk1="
+                f"{_mean_float(metrics, 'actor_qc_percentile_risk1'):.3f} "
+                f"q_c_action_spread_risk1="
+                f"{_mean_float(metrics, 'q_c_action_spread_risk1'):.2e} "
+                f"actor_qc_rank_mean_risk05="
+                f"{_mean_float(metrics, 'actor_qc_rank_mean_risk05'):.2f} "
+                f"actor_qc_percentile_risk05="
+                f"{_mean_float(metrics, 'actor_qc_percentile_risk05'):.3f} "
+                f"q_c_action_spread_risk05="
+                f"{_mean_float(metrics, 'q_c_action_spread_risk05'):.2e} "
+                f"actor_qc_rank_mean_risk025="
+                f"{_mean_float(metrics, 'actor_qc_rank_mean_risk025'):.2f} "
+                f"actor_qc_percentile_risk025="
+                f"{_mean_float(metrics, 'actor_qc_percentile_risk025'):.3f} "
+                f"q_c_action_spread_risk025="
+                f"{_mean_float(metrics, 'q_c_action_spread_risk025'):.2e}]"
             ),
             (
                 "         "

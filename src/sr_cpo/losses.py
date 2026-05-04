@@ -14,6 +14,8 @@ Array = jax.Array
 Params = Mapping[str, Any]
 LOG_2 = jnp.log(2.0)
 _L2_EPS = 1e-12
+_ACTION_RANK_RANDOM_ACTIONS = 16
+_ACTION_RANK_PERTURB_STD = 0.1
 
 
 def row_l2_normalize(x: Array, eps: float = 1e-12) -> tuple[Array, Array]:
@@ -285,6 +287,94 @@ def actor_loss_fn(
     def risky_mean(x: Array) -> Array:
         return jnp.sum(jnp.asarray(x, dtype=jnp.float32) * risk_weight) / risk_denom
 
+    rank_key, perturb_key = jax.random.split(key)
+    random_actions = jax.random.uniform(
+        rank_key,
+        (
+            _ACTION_RANK_RANDOM_ACTIONS,
+            *sample.action.shape,
+        ),
+        minval=-1.0,
+        maxval=1.0,
+        dtype=sample.action.dtype,
+    )
+    perturbed_actions = jnp.clip(
+        sample.action[None, ...]
+        + _ACTION_RANK_PERTURB_STD
+        * jax.random.normal(
+            perturb_key,
+            (
+                _ACTION_RANK_RANDOM_ACTIONS,
+                *sample.action.shape,
+            ),
+            dtype=sample.action.dtype,
+        ),
+        -1.0,
+        1.0,
+    )
+    candidate_actions = jnp.concatenate(
+        [
+            sample.action[None, ...],
+            jnp.zeros_like(sample.action)[None, ...],
+            (-sample.action)[None, ...],
+            random_actions,
+            perturbed_actions,
+        ],
+        axis=0,
+    )
+
+    qc_candidates = jax.vmap(cost_score_for_action)(candidate_actions)
+    actor_qc = qc_candidates[0]
+    actor_qc_rank = 1.0 + jnp.sum(qc_candidates < actor_qc[None, ...], axis=0)
+    candidate_count = jnp.asarray(qc_candidates.shape[0], dtype=jnp.float32)
+    actor_qc_percentile = (actor_qc_rank - 1.0) / (candidate_count - 1.0)
+    qc_action_spread = jnp.max(qc_candidates, axis=0) - jnp.min(
+        qc_candidates, axis=0
+    )
+    best_qc_action_is_actor = (
+        jnp.argmin(qc_candidates, axis=0) == 0
+    ).astype(jnp.float32)
+
+    min_hazard_dist = jnp.asarray(
+        extras.get(
+            "min_hazard_dist",
+            jnp.full_like(qc_value, jnp.inf, dtype=jnp.float32),
+        ),
+        dtype=jnp.float32,
+    )
+    hazard_available = jnp.isfinite(min_hazard_dist) & (min_hazard_dist >= 0.0)
+
+    def masked_mean(x: Array, mask: Array) -> Array:
+        weight = mask.astype(jnp.float32)
+        return jnp.sum(jnp.asarray(x, dtype=jnp.float32) * weight) / jnp.maximum(
+            jnp.sum(weight), 1.0
+        )
+
+    def rank_bin_metrics(mask: Array, suffix: str) -> dict[str, Array]:
+        return {
+            f"actor_qc_rank_mean_{suffix}": masked_mean(actor_qc_rank, mask),
+            f"actor_qc_percentile_{suffix}": masked_mean(
+                actor_qc_percentile, mask
+            ),
+            f"q_c_action_spread_{suffix}": masked_mean(qc_action_spread, mask),
+            f"best_qc_action_is_actor_frac_{suffix}": masked_mean(
+                best_qc_action_is_actor, mask
+            ),
+        }
+
+    action_rank_probes = {
+        "actor_qc_rank_mean": jnp.mean(actor_qc_rank),
+        "actor_qc_percentile": jnp.mean(actor_qc_percentile),
+        "q_c_action_spread": jnp.mean(qc_action_spread),
+        "best_qc_action_is_actor_frac": jnp.mean(best_qc_action_is_actor),
+        "action_rank_hazard_available_frac": jnp.mean(
+            hazard_available.astype(jnp.float32)
+        ),
+        **rank_bin_metrics(hazard_available & (min_hazard_dist < 1.0), "risk1"),
+        **rank_bin_metrics(hazard_available & (min_hazard_dist < 0.5), "risk05"),
+        **rank_bin_metrics(hazard_available & (min_hazard_dist < 0.25), "risk025"),
+    }
+
     probes = {
         "alpha": alpha,
         "log_prob_mean": jnp.mean(sample.log_prob),
@@ -313,6 +403,7 @@ def actor_loss_fn(
         "qc_actor_risky_mean": risky_mean(qc_value),
         "qc_action_delta_risky_mean": risky_mean(qc_action_delta),
         "grad_ratio_cost_reward_risky": risky_mean(grad_ratio_rows),
+        **action_rank_probes,
         "nan_sa": _has_nonfinite(sa_repr),
         "nan_g": _has_nonfinite(g_repr),
         "nan_action": _has_nonfinite(sample.action),

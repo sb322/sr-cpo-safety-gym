@@ -495,6 +495,23 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "qc_actor_risky": jnp.asarray([0.4]),
         "qc_action_delta_risky_actor": jnp.asarray([0.07]),
         "grad_ratio_cost_reward_risky_actor": jnp.asarray([0.2]),
+        "actor_qc_rank_mean": jnp.asarray([3.0]),
+        "actor_qc_percentile": jnp.asarray([0.1]),
+        "q_c_action_spread": jnp.asarray([0.4]),
+        "best_qc_action_is_actor_frac": jnp.asarray([0.25]),
+        "action_rank_hazard_available_frac": jnp.asarray([1.0]),
+        "actor_qc_rank_mean_risk1": jnp.asarray([4.0]),
+        "actor_qc_percentile_risk1": jnp.asarray([0.2]),
+        "q_c_action_spread_risk1": jnp.asarray([0.5]),
+        "best_qc_action_is_actor_frac_risk1": jnp.asarray([0.2]),
+        "actor_qc_rank_mean_risk05": jnp.asarray([5.0]),
+        "actor_qc_percentile_risk05": jnp.asarray([0.3]),
+        "q_c_action_spread_risk05": jnp.asarray([0.6]),
+        "best_qc_action_is_actor_frac_risk05": jnp.asarray([0.15]),
+        "actor_qc_rank_mean_risk025": jnp.asarray([6.0]),
+        "actor_qc_percentile_risk025": jnp.asarray([0.4]),
+        "q_c_action_spread_risk025": jnp.asarray([0.7]),
+        "best_qc_action_is_actor_frac_risk025": jnp.asarray([0.1]),
         "nu_c": jnp.asarray([0.01]),
         "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
@@ -587,6 +604,20 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "Qc_risk=0.4000" in text
     assert "dQc_risk=7.00e-02" in text
     assert "grad_ratio_risk=2.00e-01" in text
+    assert "action_rank[ actor_qc_rank_mean=3.00" in text
+    assert "actor_qc_percentile=0.100" in text
+    assert "q_c_action_spread=4.00e-01" in text
+    assert "best_qc_action_is_actor_frac=0.250" in text
+    assert "hazard_rank_bins_available=1.000" in text
+    assert "actor_qc_rank_mean_risk1=4.00" in text
+    assert "actor_qc_percentile_risk1=0.200" in text
+    assert "q_c_action_spread_risk1=5.00e-01" in text
+    assert "actor_qc_rank_mean_risk05=5.00" in text
+    assert "actor_qc_percentile_risk05=0.300" in text
+    assert "q_c_action_spread_risk05=6.00e-01" in text
+    assert "actor_qc_rank_mean_risk025=6.00" in text
+    assert "actor_qc_percentile_risk025=0.400" in text
+    assert "q_c_action_spread_risk025=7.00e-01" in text
     assert "nu_c=1.0e-02" in text
     assert "eval_ever_reached=0.2000" in text
     assert "eval_first_hit_time=12.00" in text

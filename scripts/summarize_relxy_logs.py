@@ -121,6 +121,20 @@ FIELDNAMES = (
     "qc_actor_risky",
     "qc_action_delta_risky",
     "grad_ratio_cost_reward_risky",
+    "actor_qc_rank_mean",
+    "actor_qc_percentile",
+    "q_c_action_spread",
+    "best_qc_action_is_actor_frac",
+    "action_rank_hazard_available_frac",
+    "actor_qc_rank_mean_risk1",
+    "actor_qc_percentile_risk1",
+    "q_c_action_spread_risk1",
+    "actor_qc_rank_mean_risk05",
+    "actor_qc_percentile_risk05",
+    "q_c_action_spread_risk05",
+    "actor_qc_rank_mean_risk025",
+    "actor_qc_percentile_risk025",
+    "q_c_action_spread_risk025",
     *EVAL_METRIC_KEYS,
 )
 
@@ -131,7 +145,7 @@ def _parse_assignments(line: str) -> dict[str, str]:
         if "=" not in token:
             continue
         key, value = token.split("=", 1)
-        pairs[key] = value
+        pairs[key] = value.rstrip("]")
     return pairs
 
 
@@ -147,6 +161,10 @@ def parse_log(path: Path) -> dict[str, str]:
             parsed = _parse_assignments(line)
             if parsed:
                 last_metrics = parsed
+        elif "action_rank[" in line:
+            parsed = _parse_assignments(line)
+            if parsed:
+                last_metrics.update(parsed)
         elif "eval_ever_reached=" in line or "eval_ever_reached_std" in line:
             parsed = _parse_assignments(line)
             if parsed:
@@ -190,6 +208,40 @@ def parse_log(path: Path) -> dict[str, str]:
         "qc_actor_risky": last_metrics.get("Qc_risk", ""),
         "qc_action_delta_risky": last_metrics.get("dQc_risk", ""),
         "grad_ratio_cost_reward_risky": last_metrics.get("grad_ratio_risk", ""),
+        "actor_qc_rank_mean": last_metrics.get("actor_qc_rank_mean", ""),
+        "actor_qc_percentile": last_metrics.get("actor_qc_percentile", ""),
+        "q_c_action_spread": last_metrics.get("q_c_action_spread", ""),
+        "best_qc_action_is_actor_frac": last_metrics.get(
+            "best_qc_action_is_actor_frac", ""
+        ),
+        "action_rank_hazard_available_frac": last_metrics.get(
+            "hazard_rank_bins_available", ""
+        ),
+        "actor_qc_rank_mean_risk1": last_metrics.get(
+            "actor_qc_rank_mean_risk1", ""
+        ),
+        "actor_qc_percentile_risk1": last_metrics.get(
+            "actor_qc_percentile_risk1", ""
+        ),
+        "q_c_action_spread_risk1": last_metrics.get("q_c_action_spread_risk1", ""),
+        "actor_qc_rank_mean_risk05": last_metrics.get(
+            "actor_qc_rank_mean_risk05", ""
+        ),
+        "actor_qc_percentile_risk05": last_metrics.get(
+            "actor_qc_percentile_risk05", ""
+        ),
+        "q_c_action_spread_risk05": last_metrics.get(
+            "q_c_action_spread_risk05", ""
+        ),
+        "actor_qc_rank_mean_risk025": last_metrics.get(
+            "actor_qc_rank_mean_risk025", ""
+        ),
+        "actor_qc_percentile_risk025": last_metrics.get(
+            "actor_qc_percentile_risk025", ""
+        ),
+        "q_c_action_spread_risk025": last_metrics.get(
+            "q_c_action_spread_risk025", ""
+        ),
     }
     for key in METRIC_KEYS:
         if key in ("λ̃", "Qc", "λQc_a"):

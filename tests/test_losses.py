@@ -249,6 +249,20 @@ def test_actor_loss_forward_and_grad_finite_on_random_batch() -> None:
         "qc_actor_risky_mean",
         "qc_action_delta_risky_mean",
         "grad_ratio_cost_reward_risky",
+        "actor_qc_rank_mean",
+        "actor_qc_percentile",
+        "q_c_action_spread",
+        "best_qc_action_is_actor_frac",
+        "action_rank_hazard_available_frac",
+        "actor_qc_rank_mean_risk1",
+        "actor_qc_percentile_risk1",
+        "q_c_action_spread_risk1",
+        "actor_qc_rank_mean_risk05",
+        "actor_qc_percentile_risk05",
+        "q_c_action_spread_risk05",
+        "actor_qc_rank_mean_risk025",
+        "actor_qc_percentile_risk025",
+        "q_c_action_spread_risk025",
     ):
         assert key in probes
         assert bool(jnp.isfinite(probes[key]))
