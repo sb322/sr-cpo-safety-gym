@@ -84,6 +84,10 @@ class TrainConfig:
     mask_goal_in_state: bool = False
     mask_native_goal_lidar: bool = False
     probe_counterfactual_costs: bool = False
+    eval_counterfactual_action_probes: bool = False
+    counterfactual_probe_random_actions: int = 16
+    counterfactual_probe_perturb_actions: int = 16
+    counterfactual_probe_perturb_std: float = 0.1
     width: int = 64
     num_blocks: int = 2
     latent_dim: int = 32
@@ -441,6 +445,113 @@ def _eval_metrics(
     return metrics
 
 
+def _split_eval_params(params: Any) -> tuple[Any, Any | None]:
+    if isinstance(params, tuple) and len(params) == 2:
+        return params
+    return params, None
+
+
+def _safe_mean_masked(values: Array, mask: Array) -> Array:
+    values = jnp.asarray(values, dtype=jnp.float32)
+    mask = jnp.asarray(mask, dtype=jnp.float32)
+    denom = jnp.sum(mask)
+    return jnp.where(denom > 0.0, jnp.sum(values * mask) / denom, 0.0)
+
+
+def _candidate_corr(x: Array, y: Array) -> Array:
+    x = jnp.asarray(x, dtype=jnp.float32)
+    y = jnp.asarray(y, dtype=jnp.float32)
+    x = x - jnp.mean(x)
+    y = y - jnp.mean(y)
+    denom = jnp.sqrt(jnp.sum(x * x) * jnp.sum(y * y))
+    return jnp.where(denom > 1e-8, jnp.sum(x * y) / denom, 0.0)
+
+
+def _actor_percentile(values: Array) -> Array:
+    values = jnp.asarray(values, dtype=jnp.float32)
+    actor_value = values[0]
+    less = jnp.sum((values < actor_value).astype(jnp.float32))
+    equal = jnp.sum((values == actor_value).astype(jnp.float32))
+    return (less + 0.5 * equal) / values.shape[0]
+
+
+def _counterfactual_summary(
+    *,
+    qcs: Array,
+    true_cost: Array,
+    hard_violation: Array,
+    hazard_violation: Array,
+    current_cost: Array,
+    current_hard_violation: Array,
+    current_min_hazard_dist: Array,
+) -> dict[str, Array]:
+    """Summarizes same-state candidate-action safety probes."""
+
+    qcs = jnp.asarray(qcs, dtype=jnp.float32)
+    true_cost = jnp.asarray(true_cost, dtype=jnp.float32)
+    hard_violation = jnp.asarray(hard_violation, dtype=jnp.float32)
+    hazard_violation = jnp.asarray(hazard_violation, dtype=jnp.float32)
+    current_cost = jnp.asarray(current_cost, dtype=jnp.float32)
+    current_hard_violation = jnp.asarray(current_hard_violation, dtype=jnp.float32)
+    current_min_hazard_dist = jnp.asarray(current_min_hazard_dist, dtype=jnp.float32)
+
+    true_cost_spread = jnp.max(true_cost, axis=0) - jnp.min(true_cost, axis=0)
+    hard_spread = jnp.max(hard_violation, axis=0) - jnp.min(hard_violation, axis=0)
+    hazard_spread = (
+        jnp.max(hazard_violation, axis=0) - jnp.min(hazard_violation, axis=0)
+    )
+    qc_spread = jnp.max(qcs, axis=0) - jnp.min(qcs, axis=0)
+    corr_cost = jax.vmap(_candidate_corr, in_axes=(1, 1))(qcs, true_cost)
+    corr_hazard = jax.vmap(_candidate_corr, in_axes=(1, 1))(qcs, hazard_violation)
+    actor_true_cost_percentile = jax.vmap(_actor_percentile, in_axes=1)(true_cost)
+    actor_qc_percentile_cf = jax.vmap(_actor_percentile, in_axes=1)(qcs)
+    actor_true_hazard_percentile = jax.vmap(_actor_percentile, in_axes=1)(
+        hazard_violation
+    )
+    best_qc = jnp.argmin(qcs, axis=0)
+    best_true_cost = jnp.argmin(true_cost, axis=0)
+    best_true_hazard = jnp.argmin(hazard_violation, axis=0)
+    match_cost = (best_qc == best_true_cost).astype(jnp.float32)
+    match_hazard = (best_qc == best_true_hazard).astype(jnp.float32)
+    nonzero_cost_spread = (true_cost_spread > 1e-6).astype(jnp.float32)
+    nonzero_hazard_spread = (hazard_spread > 1e-6).astype(jnp.float32)
+
+    per_state = {
+        "true_action_cost_spread": true_cost_spread,
+        "true_action_hard_viol_spread": hard_spread,
+        "true_action_hazard_spread": hazard_spread,
+        "qc_action_spread": qc_spread,
+        "corr_qc_true_cost": corr_cost,
+        "corr_qc_true_hazard": corr_hazard,
+        "actor_true_cost_percentile": actor_true_cost_percentile,
+        "actor_qc_percentile_cf": actor_qc_percentile_cf,
+        "actor_true_hazard_percentile": actor_true_hazard_percentile,
+        "best_qc_matches_best_true_cost_frac": match_cost,
+        "best_qc_matches_best_true_hazard_frac": match_hazard,
+        "frac_states_with_nonzero_true_cost_spread": nonzero_cost_spread,
+        "frac_states_with_nonzero_hazard_spread": nonzero_hazard_spread,
+    }
+    metrics = {key: jnp.mean(value) for key, value in per_state.items()}
+
+    hazard_dist_available = current_min_hazard_dist >= 0.0
+    masks = {
+        "costpos": current_cost > 0.0,
+        "hardpos": current_hard_violation > 0.0,
+        "haz1": hazard_dist_available & (current_min_hazard_dist < 1.0),
+        "haz05": hazard_dist_available & (current_min_hazard_dist < 0.5),
+        "haz025": hazard_dist_available & (current_min_hazard_dist < 0.25),
+    }
+    metrics["cf_hazard_dist_available_frac"] = jnp.mean(
+        hazard_dist_available.astype(jnp.float32)
+    )
+    for suffix, mask in masks.items():
+        mask_f = mask.astype(jnp.float32)
+        metrics[f"cf_{suffix}_frac"] = jnp.mean(mask_f)
+        for key, value in per_state.items():
+            metrics[f"{key}_{suffix}"] = _safe_mean_masked(value, mask_f)
+    return metrics
+
+
 def make_policy_evaluator(
     objects: TrainingObjects, config: TrainConfig, *, std_scale: float = 0.0
 ) -> Callable[[Any, Array], Mapping[str, Array]]:
@@ -448,14 +559,19 @@ def make_policy_evaluator(
 
     env_adapter = objects.env_adapter
 
-    def evaluate_real(actor_params: Any, key: Array) -> Mapping[str, Array]:
+    def evaluate_real(params: Any, key: Array) -> Mapping[str, Array]:
         if env_adapter is None:
             raise ValueError("real-env evaluation requires objects.env_adapter")
+        actor_params, cost_critic_params = _split_eval_params(params)
         key, reset_key = jax.random.split(key)
         eval_state, _ = env_adapter.reset(reset_key)
         initial_goal_xy = _real_goal_xy(env_adapter, eval_state)
         initial_frozen_goal_xy = initial_goal_xy
         initial_has_hit = jnp.zeros((config.num_envs,), dtype=bool)
+        run_counterfactual_probe = (
+            config.eval_counterfactual_action_probes
+            and cost_critic_params is not None
+        )
 
         def eval_step(
             carry: tuple[Any, Array, Array, Array, Array], _: Array
@@ -467,7 +583,11 @@ def make_policy_evaluator(
                 frozen_goal_xy,
                 has_hit,
             ) = carry
-            step_key, action_key = jax.random.split(step_key)
+            if run_counterfactual_probe:
+                step_key, action_key, probe_key = jax.random.split(step_key, 3)
+            else:
+                step_key, action_key = jax.random.split(step_key)
+                probe_key = action_key
             obs = _real_state_observation(env_adapter, env_state)
             goal = _real_rollout_goal(env_adapter, env_state, config)
             goal_xy_before = _real_goal_xy(env_adapter, env_state)
@@ -481,6 +601,108 @@ def make_policy_evaluator(
                 std_scale=std_scale,
             )
             next_env_state, transition = env_adapter.step(env_state, action)
+            probe_metrics: dict[str, Array] = {}
+            if run_counterfactual_probe:
+                num_random = max(config.counterfactual_probe_random_actions, 0)
+                num_perturb = max(config.counterfactual_probe_perturb_actions, 0)
+                rand_key, perturb_key = jax.random.split(probe_key)
+                random_actions = jax.random.uniform(
+                    rand_key,
+                    (num_random, config.num_envs, action.shape[-1]),
+                    minval=-1.0,
+                    maxval=1.0,
+                    dtype=jnp.float32,
+                )
+                perturb_actions = jnp.clip(
+                    action[None, ...]
+                    + config.counterfactual_probe_perturb_std
+                    * jax.random.normal(
+                        perturb_key,
+                        (num_perturb, config.num_envs, action.shape[-1]),
+                        dtype=jnp.float32,
+                    ),
+                    -1.0,
+                    1.0,
+                )
+                candidate_actions = jnp.concatenate(
+                    [
+                        action[None, ...],
+                        jnp.zeros_like(action)[None, ...],
+                        (-action)[None, ...],
+                        random_actions,
+                        perturb_actions,
+                    ],
+                    axis=0,
+                )
+                qcs = jax.vmap(
+                    lambda candidate_action: objects.cost_critic.apply(
+                        cost_critic_params, obs, candidate_action, goal
+                    )
+                )(candidate_actions)
+
+                reference = jnp.zeros((config.num_envs,), dtype=jnp.float32)
+
+                def probe_step(candidate_action: Array) -> tuple[Array, ...]:
+                    _, candidate_transition = env_adapter.step(
+                        env_state, candidate_action
+                    )
+                    extras = candidate_transition.extras
+                    true_cost = jnp.asarray(
+                        extras.get("cost", reference), dtype=jnp.float32
+                    )
+                    hard_violation = jnp.asarray(
+                        extras.get("hard_violation", (true_cost > 0.0)),
+                        dtype=jnp.float32,
+                    )
+                    hazard_violation = jnp.asarray(
+                        extras.get("hazard_violation", hard_violation),
+                        dtype=jnp.float32,
+                    )
+                    min_hazard_dist = jnp.asarray(
+                        extras.get(
+                            "min_hazard_dist",
+                            jnp.full_like(true_cost, -1.0, dtype=jnp.float32),
+                        ),
+                        dtype=jnp.float32,
+                    )
+                    return (
+                        true_cost,
+                        hard_violation,
+                        hazard_violation,
+                        min_hazard_dist,
+                    )
+
+                (
+                    true_cost,
+                    hard_violation,
+                    hazard_violation,
+                    _candidate_min_hazard_dist,
+                ) = jax.vmap(probe_step)(candidate_actions)
+                current_cost = jnp.asarray(
+                    transition.extras.get("cost", reference), dtype=jnp.float32
+                )
+                current_hard_violation = jnp.asarray(
+                    transition.extras.get(
+                        "hard_violation", (current_cost > 0.0).astype(jnp.float32)
+                    ),
+                    dtype=jnp.float32,
+                )
+                current_min_hazard_dist = jnp.asarray(
+                    transition.extras.get(
+                        "min_hazard_dist",
+                        jnp.full_like(current_cost, -1.0, dtype=jnp.float32),
+                    ),
+                    dtype=jnp.float32,
+                )
+                probe_metrics = _counterfactual_summary(
+                    qcs=qcs,
+                    true_cost=true_cost,
+                    hard_violation=hard_violation,
+                    hazard_violation=hazard_violation,
+                    current_cost=current_cost,
+                    current_hard_violation=current_hard_violation,
+                    current_min_hazard_dist=current_min_hazard_dist,
+                )
             robot_xy_after = _real_robot_xy(env_adapter, next_env_state)
             reference = jnp.zeros((config.num_envs,), dtype=jnp.float32)
             cost = jnp.asarray(
@@ -522,6 +744,7 @@ def make_policy_evaluator(
                 "goal_reached": goal_reached,
                 "cost": cost,
                 "frozen_goal_dist": frozen_goal_dist,
+                **probe_metrics,
             }
 
         _, trajectory = jax.lax.scan(
@@ -535,7 +758,7 @@ def make_policy_evaluator(
             ),
             jnp.arange(config.env_episode_length),
         )
-        return _eval_metrics(
+        metrics = _eval_metrics(
             commanded_goal_dist=trajectory["commanded_goal_dist"],
             initial_goal_dist=trajectory["initial_goal_dist"],
             resampled_goal_dist=trajectory["resampled_goal_dist"],
@@ -547,8 +770,22 @@ def make_policy_evaluator(
                 else None
             ),
         )
+        if run_counterfactual_probe:
+            for key, value in trajectory.items():
+                if key in {
+                    "commanded_goal_dist",
+                    "initial_goal_dist",
+                    "resampled_goal_dist",
+                    "goal_reached",
+                    "cost",
+                    "frozen_goal_dist",
+                }:
+                    continue
+                metrics[key] = jnp.mean(jnp.asarray(value, dtype=jnp.float32))
+        return metrics
 
-    def evaluate_toy(actor_params: Any, key: Array) -> Mapping[str, Array]:
+    def evaluate_toy(params: Any, key: Array) -> Mapping[str, Array]:
+        actor_params, _ = _split_eval_params(params)
         key, reset_key = jax.random.split(key)
         eval_state = ToyEnvState(
             obs=0.1
@@ -1635,6 +1872,64 @@ def _format_eval_metrics_line(metrics: Mapping[str, Array]) -> str:
     return line
 
 
+def _format_counterfactual_probe_line(metrics: Mapping[str, Array]) -> str | None:
+    if "true_action_cost_spread" not in metrics:
+        return None
+    return (
+        "         "
+        f"counterfactual[ true_action_cost_spread="
+        f"{_mean_float(metrics, 'true_action_cost_spread'):.2e} "
+        f"true_action_hard_viol_spread="
+        f"{_mean_float(metrics, 'true_action_hard_viol_spread'):.2e} "
+        f"true_action_hazard_spread="
+        f"{_mean_float(metrics, 'true_action_hazard_spread'):.2e} "
+        f"qc_action_spread={_mean_float(metrics, 'qc_action_spread'):.2e} "
+        f"corr_qc_true_cost={_mean_float(metrics, 'corr_qc_true_cost'):.3f} "
+        f"corr_qc_true_hazard={_mean_float(metrics, 'corr_qc_true_hazard'):.3f} "
+        f"actor_true_cost_percentile="
+        f"{_mean_float(metrics, 'actor_true_cost_percentile'):.3f} "
+        f"actor_qc_percentile_cf="
+        f"{_mean_float(metrics, 'actor_qc_percentile_cf'):.3f} "
+        f"actor_true_hazard_percentile="
+        f"{_mean_float(metrics, 'actor_true_hazard_percentile'):.3f} "
+        f"best_qc_matches_best_true_cost_frac="
+        f"{_mean_float(metrics, 'best_qc_matches_best_true_cost_frac'):.3f} "
+        f"best_qc_matches_best_true_hazard_frac="
+        f"{_mean_float(metrics, 'best_qc_matches_best_true_hazard_frac'):.3f} "
+        f"frac_states_with_nonzero_true_cost_spread="
+        f"{_mean_float(metrics, 'frac_states_with_nonzero_true_cost_spread'):.3f} "
+        f"frac_states_with_nonzero_hazard_spread="
+        f"{_mean_float(metrics, 'frac_states_with_nonzero_hazard_spread'):.3f} "
+        f"cf_hazard_dist_available_frac="
+        f"{_mean_float(metrics, 'cf_hazard_dist_available_frac'):.3f} "
+        f"cf_costpos_frac={_mean_float(metrics, 'cf_costpos_frac'):.3f} "
+        f"cf_hardpos_frac={_mean_float(metrics, 'cf_hardpos_frac'):.3f} "
+        f"cf_haz1_frac={_mean_float(metrics, 'cf_haz1_frac'):.3f} "
+        f"cf_haz05_frac={_mean_float(metrics, 'cf_haz05_frac'):.3f} "
+        f"cf_haz025_frac={_mean_float(metrics, 'cf_haz025_frac'):.3f} "
+        f"true_action_cost_spread_costpos="
+        f"{_mean_float(metrics, 'true_action_cost_spread_costpos'):.2e} "
+        f"corr_qc_true_cost_costpos="
+        f"{_mean_float(metrics, 'corr_qc_true_cost_costpos'):.3f} "
+        f"true_action_cost_spread_hardpos="
+        f"{_mean_float(metrics, 'true_action_cost_spread_hardpos'):.2e} "
+        f"corr_qc_true_cost_hardpos="
+        f"{_mean_float(metrics, 'corr_qc_true_cost_hardpos'):.3f} "
+        f"true_action_cost_spread_haz1="
+        f"{_mean_float(metrics, 'true_action_cost_spread_haz1'):.2e} "
+        f"corr_qc_true_cost_haz1="
+        f"{_mean_float(metrics, 'corr_qc_true_cost_haz1'):.3f} "
+        f"true_action_cost_spread_haz05="
+        f"{_mean_float(metrics, 'true_action_cost_spread_haz05'):.2e} "
+        f"corr_qc_true_cost_haz05="
+        f"{_mean_float(metrics, 'corr_qc_true_cost_haz05'):.3f} "
+        f"true_action_cost_spread_haz025="
+        f"{_mean_float(metrics, 'true_action_cost_spread_haz025'):.2e} "
+        f"corr_qc_true_cost_haz025="
+        f"{_mean_float(metrics, 'corr_qc_true_cost_haz025'):.3f}]"
+    )
+
+
 def format_epoch_metrics(
     epoch: int,
     total_epochs: int,
@@ -1779,6 +2074,14 @@ def format_epoch_metrics(
                 f"cost_uniform_batch_mean_cost="
                 f"{_mean_float(metrics, 'cost_uniform_batch_mean_cost'):.4f}]"
             ),
+            *(
+                [counterfactual_line]
+                if (
+                    counterfactual_line := _format_counterfactual_probe_line(metrics)
+                )
+                is not None
+                else []
+            ),
             (
                 "         "
                 f"nan[obs_c={_max_flag(metrics, 'nan_obs_critic')} "
@@ -1895,7 +2198,12 @@ def run_training(
         merged_eval_metrics: dict[str, Array] = {}
         for std_scale, policy_evaluator in policy_evaluators:
             eval_key, epoch_eval_key = jax.random.split(eval_key)
-            eval_metrics = policy_evaluator(state.actor_params, epoch_eval_key)
+            eval_params: Any
+            if config.eval_counterfactual_action_probes:
+                eval_params = (state.actor_params, state.cost_critic_params)
+            else:
+                eval_params = state.actor_params
+            eval_metrics = policy_evaluator(eval_params, epoch_eval_key)
             jax.tree_util.tree_map(lambda x: x.block_until_ready(), eval_metrics)
             merged_eval_metrics.update(
                 _suffix_eval_metrics(eval_metrics, std_scale=std_scale)

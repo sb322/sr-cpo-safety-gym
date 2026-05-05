@@ -372,6 +372,10 @@ def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
 def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_limit == 0.0001
     assert TrainConfig().cost_risk_replay_ratio == 0.0
+    assert TrainConfig().eval_counterfactual_action_probes is False
+    assert TrainConfig().counterfactual_probe_random_actions == 16
+    assert TrainConfig().counterfactual_probe_perturb_actions == 16
+    assert TrainConfig().counterfactual_probe_perturb_std == 0.1
 
 
 def test_run_training_prints_required_probe_sections() -> None:
@@ -518,6 +522,35 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "cost_risky_available_frac": jnp.asarray([0.125]),
         "cost_risky_batch_mean_cost": jnp.asarray([0.08]),
         "cost_uniform_batch_mean_cost": jnp.asarray([0.02]),
+        "true_action_cost_spread": jnp.asarray([0.05]),
+        "true_action_hard_viol_spread": jnp.asarray([1.0]),
+        "true_action_hazard_spread": jnp.asarray([0.5]),
+        "qc_action_spread": jnp.asarray([0.07]),
+        "corr_qc_true_cost": jnp.asarray([0.25]),
+        "corr_qc_true_hazard": jnp.asarray([-0.125]),
+        "actor_true_cost_percentile": jnp.asarray([0.2]),
+        "actor_qc_percentile_cf": jnp.asarray([0.1]),
+        "actor_true_hazard_percentile": jnp.asarray([0.3]),
+        "best_qc_matches_best_true_cost_frac": jnp.asarray([0.4]),
+        "best_qc_matches_best_true_hazard_frac": jnp.asarray([0.5]),
+        "frac_states_with_nonzero_true_cost_spread": jnp.asarray([0.6]),
+        "frac_states_with_nonzero_hazard_spread": jnp.asarray([0.7]),
+        "cf_hazard_dist_available_frac": jnp.asarray([1.0]),
+        "cf_costpos_frac": jnp.asarray([0.8]),
+        "cf_hardpos_frac": jnp.asarray([0.9]),
+        "cf_haz1_frac": jnp.asarray([0.4]),
+        "cf_haz05_frac": jnp.asarray([0.1]),
+        "cf_haz025_frac": jnp.asarray([0.05]),
+        "true_action_cost_spread_costpos": jnp.asarray([0.06]),
+        "corr_qc_true_cost_costpos": jnp.asarray([0.35]),
+        "true_action_cost_spread_hardpos": jnp.asarray([0.07]),
+        "corr_qc_true_cost_hardpos": jnp.asarray([0.45]),
+        "true_action_cost_spread_haz1": jnp.asarray([0.075]),
+        "corr_qc_true_cost_haz1": jnp.asarray([0.5]),
+        "true_action_cost_spread_haz05": jnp.asarray([0.08]),
+        "corr_qc_true_cost_haz05": jnp.asarray([0.55]),
+        "true_action_cost_spread_haz025": jnp.asarray([0.09]),
+        "corr_qc_true_cost_haz025": jnp.asarray([0.65]),
         "nu_c": jnp.asarray([0.01]),
         "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
@@ -629,6 +662,35 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "cost_risky_available_frac=0.125" in text
     assert "cost_risky_batch_mean_cost=0.0800" in text
     assert "cost_uniform_batch_mean_cost=0.0200" in text
+    assert "counterfactual[ true_action_cost_spread=5.00e-02" in text
+    assert "true_action_hard_viol_spread=1.00e+00" in text
+    assert "true_action_hazard_spread=5.00e-01" in text
+    assert "qc_action_spread=7.00e-02" in text
+    assert "corr_qc_true_cost=0.250" in text
+    assert "corr_qc_true_hazard=-0.125" in text
+    assert "actor_true_cost_percentile=0.200" in text
+    assert "actor_qc_percentile_cf=0.100" in text
+    assert "actor_true_hazard_percentile=0.300" in text
+    assert "best_qc_matches_best_true_cost_frac=0.400" in text
+    assert "best_qc_matches_best_true_hazard_frac=0.500" in text
+    assert "frac_states_with_nonzero_true_cost_spread=0.600" in text
+    assert "frac_states_with_nonzero_hazard_spread=0.700" in text
+    assert "cf_hazard_dist_available_frac=1.000" in text
+    assert "cf_costpos_frac=0.800" in text
+    assert "cf_hardpos_frac=0.900" in text
+    assert "cf_haz1_frac=0.400" in text
+    assert "cf_haz05_frac=0.100" in text
+    assert "cf_haz025_frac=0.050" in text
+    assert "true_action_cost_spread_costpos=6.00e-02" in text
+    assert "corr_qc_true_cost_costpos=0.350" in text
+    assert "true_action_cost_spread_hardpos=7.00e-02" in text
+    assert "corr_qc_true_cost_hardpos=0.450" in text
+    assert "true_action_cost_spread_haz1=7.50e-02" in text
+    assert "corr_qc_true_cost_haz1=0.500" in text
+    assert "true_action_cost_spread_haz05=8.00e-02" in text
+    assert "corr_qc_true_cost_haz05=0.550" in text
+    assert "true_action_cost_spread_haz025=9.00e-02" in text
+    assert "corr_qc_true_cost_haz025=0.650" in text
     assert "nu_c=1.0e-02" in text
     assert "eval_ever_reached=0.2000" in text
     assert "eval_first_hit_time=12.00" in text

@@ -77,6 +77,37 @@ EVAL_METRIC_KEYS = (
     "eval_success_count_std1",
     "eval_cost_return_std1",
 )
+COUNTERFACTUAL_METRIC_KEYS = (
+    "true_action_cost_spread",
+    "true_action_hard_viol_spread",
+    "true_action_hazard_spread",
+    "qc_action_spread",
+    "corr_qc_true_cost",
+    "corr_qc_true_hazard",
+    "actor_true_cost_percentile",
+    "actor_qc_percentile_cf",
+    "actor_true_hazard_percentile",
+    "best_qc_matches_best_true_cost_frac",
+    "best_qc_matches_best_true_hazard_frac",
+    "frac_states_with_nonzero_true_cost_spread",
+    "frac_states_with_nonzero_hazard_spread",
+    "cf_hazard_dist_available_frac",
+    "cf_costpos_frac",
+    "cf_hardpos_frac",
+    "cf_haz1_frac",
+    "cf_haz05_frac",
+    "cf_haz025_frac",
+    "true_action_cost_spread_costpos",
+    "corr_qc_true_cost_costpos",
+    "true_action_cost_spread_hardpos",
+    "corr_qc_true_cost_hardpos",
+    "true_action_cost_spread_haz1",
+    "corr_qc_true_cost_haz1",
+    "true_action_cost_spread_haz05",
+    "corr_qc_true_cost_haz05",
+    "true_action_cost_spread_haz025",
+    "corr_qc_true_cost_haz025",
+)
 FIELDNAMES = (
     "file",
     "label",
@@ -140,6 +171,7 @@ FIELDNAMES = (
     "cost_risky_available_frac",
     "cost_risky_batch_mean_cost",
     "cost_uniform_batch_mean_cost",
+    *COUNTERFACTUAL_METRIC_KEYS,
     *EVAL_METRIC_KEYS,
 )
 
@@ -171,6 +203,10 @@ def parse_log(path: Path) -> dict[str, str]:
             if parsed:
                 last_metrics.update(parsed)
         elif "cost_replay[" in line:
+            parsed = _parse_assignments(line)
+            if parsed:
+                last_metrics.update(parsed)
+        elif "counterfactual[" in line:
             parsed = _parse_assignments(line)
             if parsed:
                 last_metrics.update(parsed)
@@ -268,6 +304,8 @@ def parse_log(path: Path) -> dict[str, str]:
     for key in METRIC_KEYS:
         if key in ("λ̃", "Qc", "λQc_a"):
             continue
+        row[key] = last_metrics.get(key, "")
+    for key in COUNTERFACTUAL_METRIC_KEYS:
         row[key] = last_metrics.get(key, "")
     for key in EVAL_METRIC_KEYS:
         row[key] = last_eval_metrics.get(key, "")

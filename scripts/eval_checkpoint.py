@@ -44,6 +44,12 @@ def main() -> None:
     if not args.checkpoint_path:
         raise ValueError("--checkpoint-path is required")
     config = _train_config(args)
+    if config.eval_counterfactual_action_probes:
+        raise ValueError(
+            "counterfactual action probes require trained cost-critic params, "
+            "but actor checkpoints only store actor params; run probe logging "
+            "during training/eval instead"
+        )
     state, objects = initialize_training(config)
     actor_params = load_actor_checkpoint(args.checkpoint_path, state.actor_params)
     eval_key = jax.random.PRNGKey(args.eval_seed)
