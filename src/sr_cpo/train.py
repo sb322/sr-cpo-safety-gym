@@ -88,6 +88,9 @@ class TrainConfig:
     counterfactual_probe_random_actions: int = 16
     counterfactual_probe_perturb_actions: int = 16
     counterfactual_probe_perturb_std: float = 0.1
+    enable_multistep_counterfactual_probes: bool = False
+    counterfactual_probe_horizons: str = "5,10,20"
+    counterfactual_probe_max_states: int = 0
     width: int = 64
     num_blocks: int = 2
     latent_dim: int = 32
@@ -475,8 +478,22 @@ def _actor_percentile(values: Array) -> Array:
     return (less + 0.5 * equal) / values.shape[0]
 
 
-def _counterfactual_summary(
+def _parse_counterfactual_horizons(value: str) -> tuple[int, ...]:
+    horizons: list[int] = []
+    for piece in value.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        horizon = int(piece)
+        if horizon <= 0:
+            raise ValueError("counterfactual probe horizons must be positive")
+        horizons.append(horizon)
+    return tuple(horizons)
+
+
+def _counterfactual_candidate_summary(
     *,
+    prefix: str,
     qcs: Array,
     true_cost: Array,
     hard_violation: Array,
@@ -504,7 +521,7 @@ def _counterfactual_summary(
     corr_cost = jax.vmap(_candidate_corr, in_axes=(1, 1))(qcs, true_cost)
     corr_hazard = jax.vmap(_candidate_corr, in_axes=(1, 1))(qcs, hazard_violation)
     actor_true_cost_percentile = jax.vmap(_actor_percentile, in_axes=1)(true_cost)
-    actor_qc_percentile_cf = jax.vmap(_actor_percentile, in_axes=1)(qcs)
+    actor_qc_percentile = jax.vmap(_actor_percentile, in_axes=1)(qcs)
     actor_true_hazard_percentile = jax.vmap(_actor_percentile, in_axes=1)(
         hazard_violation
     )
@@ -514,22 +531,24 @@ def _counterfactual_summary(
     match_cost = (best_qc == best_true_cost).astype(jnp.float32)
     match_hazard = (best_qc == best_true_hazard).astype(jnp.float32)
     nonzero_cost_spread = (true_cost_spread > 1e-6).astype(jnp.float32)
+    nonzero_hard_spread = (hard_spread > 1e-6).astype(jnp.float32)
     nonzero_hazard_spread = (hazard_spread > 1e-6).astype(jnp.float32)
 
     per_state = {
-        "true_action_cost_spread": true_cost_spread,
-        "true_action_hard_viol_spread": hard_spread,
-        "true_action_hazard_spread": hazard_spread,
-        "qc_action_spread": qc_spread,
-        "corr_qc_true_cost": corr_cost,
-        "corr_qc_true_hazard": corr_hazard,
-        "actor_true_cost_percentile": actor_true_cost_percentile,
-        "actor_qc_percentile_cf": actor_qc_percentile_cf,
-        "actor_true_hazard_percentile": actor_true_hazard_percentile,
-        "best_qc_matches_best_true_cost_frac": match_cost,
-        "best_qc_matches_best_true_hazard_frac": match_hazard,
-        "frac_states_with_nonzero_true_cost_spread": nonzero_cost_spread,
-        "frac_states_with_nonzero_hazard_spread": nonzero_hazard_spread,
+        f"{prefix}true_cost_spread": true_cost_spread,
+        f"{prefix}true_hard_viol_spread": hard_spread,
+        f"{prefix}true_hazard_spread": hazard_spread,
+        f"{prefix}qc_action_spread": qc_spread,
+        f"{prefix}corr_qc_true_cost": corr_cost,
+        f"{prefix}corr_qc_true_hazard": corr_hazard,
+        f"{prefix}actor_true_cost_percentile": actor_true_cost_percentile,
+        f"{prefix}actor_qc_percentile": actor_qc_percentile,
+        f"{prefix}actor_true_hazard_percentile": actor_true_hazard_percentile,
+        f"{prefix}best_qc_matches_best_true_cost_frac": match_cost,
+        f"{prefix}best_qc_matches_best_true_hazard_frac": match_hazard,
+        f"{prefix}frac_nonzero_cost_spread": nonzero_cost_spread,
+        f"{prefix}frac_nonzero_hard_viol_spread": nonzero_hard_spread,
+        f"{prefix}frac_nonzero_hazard_spread": nonzero_hazard_spread,
     }
     metrics = {key: jnp.mean(value) for key, value in per_state.items()}
 
@@ -541,15 +560,107 @@ def _counterfactual_summary(
         "haz05": hazard_dist_available & (current_min_hazard_dist < 0.5),
         "haz025": hazard_dist_available & (current_min_hazard_dist < 0.25),
     }
-    metrics["cf_hazard_dist_available_frac"] = jnp.mean(
+    metrics[f"{prefix}hazard_dist_available_frac"] = jnp.mean(
         hazard_dist_available.astype(jnp.float32)
     )
     for suffix, mask in masks.items():
         mask_f = mask.astype(jnp.float32)
-        metrics[f"cf_{suffix}_frac"] = jnp.mean(mask_f)
+        metrics[f"{prefix}{suffix}_frac"] = jnp.mean(mask_f)
         for key, value in per_state.items():
             metrics[f"{key}_{suffix}"] = _safe_mean_masked(value, mask_f)
     return metrics
+
+
+def _counterfactual_summary(
+    *,
+    qcs: Array,
+    true_cost: Array,
+    hard_violation: Array,
+    hazard_violation: Array,
+    current_cost: Array,
+    current_hard_violation: Array,
+    current_min_hazard_dist: Array,
+) -> dict[str, Array]:
+    """Summarizes same-state candidate-action safety probes."""
+    metrics = _counterfactual_candidate_summary(
+        prefix="one_step_",
+        qcs=qcs,
+        true_cost=true_cost,
+        hard_violation=hard_violation,
+        hazard_violation=hazard_violation,
+        current_cost=current_cost,
+        current_hard_violation=current_hard_violation,
+        current_min_hazard_dist=current_min_hazard_dist,
+    )
+    legacy_key_map = {
+        "true_action_cost_spread": "one_step_true_cost_spread",
+        "true_action_hard_viol_spread": "one_step_true_hard_viol_spread",
+        "true_action_hazard_spread": "one_step_true_hazard_spread",
+        "qc_action_spread": "one_step_qc_action_spread",
+        "corr_qc_true_cost": "one_step_corr_qc_true_cost",
+        "corr_qc_true_hazard": "one_step_corr_qc_true_hazard",
+        "actor_true_cost_percentile": "one_step_actor_true_cost_percentile",
+        "actor_qc_percentile_cf": "one_step_actor_qc_percentile",
+        "actor_true_hazard_percentile": "one_step_actor_true_hazard_percentile",
+        "best_qc_matches_best_true_cost_frac": (
+            "one_step_best_qc_matches_best_true_cost_frac"
+        ),
+        "best_qc_matches_best_true_hazard_frac": (
+            "one_step_best_qc_matches_best_true_hazard_frac"
+        ),
+        "frac_states_with_nonzero_true_cost_spread": (
+            "one_step_frac_nonzero_cost_spread"
+        ),
+        "frac_states_with_nonzero_hazard_spread": (
+            "one_step_frac_nonzero_hazard_spread"
+        ),
+        "cf_hazard_dist_available_frac": "one_step_hazard_dist_available_frac",
+        "cf_costpos_frac": "one_step_costpos_frac",
+        "cf_hardpos_frac": "one_step_hardpos_frac",
+        "cf_haz1_frac": "one_step_haz1_frac",
+        "cf_haz05_frac": "one_step_haz05_frac",
+        "cf_haz025_frac": "one_step_haz025_frac",
+        "true_action_cost_spread_costpos": (
+            "one_step_true_cost_spread_costpos"
+        ),
+        "corr_qc_true_cost_costpos": "one_step_corr_qc_true_cost_costpos",
+        "true_action_cost_spread_hardpos": (
+            "one_step_true_cost_spread_hardpos"
+        ),
+        "corr_qc_true_cost_hardpos": "one_step_corr_qc_true_cost_hardpos",
+        "true_action_cost_spread_haz1": "one_step_true_cost_spread_haz1",
+        "corr_qc_true_cost_haz1": "one_step_corr_qc_true_cost_haz1",
+        "true_action_cost_spread_haz05": "one_step_true_cost_spread_haz05",
+        "corr_qc_true_cost_haz05": "one_step_corr_qc_true_cost_haz05",
+        "true_action_cost_spread_haz025": "one_step_true_cost_spread_haz025",
+        "corr_qc_true_cost_haz025": "one_step_corr_qc_true_cost_haz025",
+    }
+    for legacy_key, new_key in legacy_key_map.items():
+        metrics[legacy_key] = metrics[new_key]
+    return metrics
+
+
+def _multistep_counterfactual_summary(
+    *,
+    horizon: int,
+    qcs: Array,
+    cost_return: Array,
+    hard_return: Array,
+    hazard_return: Array,
+    current_cost: Array,
+    current_hard_violation: Array,
+    current_min_hazard_dist: Array,
+) -> dict[str, Array]:
+    return _counterfactual_candidate_summary(
+        prefix=f"cf_{horizon}_",
+        qcs=qcs,
+        true_cost=cost_return,
+        hard_violation=hard_return,
+        hazard_violation=hazard_return,
+        current_cost=current_cost,
+        current_hard_violation=current_hard_violation,
+        current_min_hazard_dist=current_min_hazard_dist,
+    )
 
 
 def make_policy_evaluator(
@@ -558,6 +669,11 @@ def make_policy_evaluator(
     """Builds a full-episode evaluator for deterministic or scaled-noise actions."""
 
     env_adapter = objects.env_adapter
+    multistep_horizons = _parse_counterfactual_horizons(
+        config.counterfactual_probe_horizons
+    )
+    max_multistep_horizon = max(multistep_horizons, default=0)
+    multistep_metric_prefixes = tuple(f"cf_{horizon}_" for horizon in multistep_horizons)
 
     def evaluate_real(params: Any, key: Array) -> Mapping[str, Array]:
         if env_adapter is None:
@@ -572,9 +688,14 @@ def make_policy_evaluator(
             config.eval_counterfactual_action_probes
             and cost_critic_params is not None
         )
+        run_multistep_counterfactual_probe = (
+            config.enable_multistep_counterfactual_probes
+            and run_counterfactual_probe
+            and bool(multistep_horizons)
+        )
 
         def eval_step(
-            carry: tuple[Any, Array, Array, Array, Array], _: Array
+            carry: tuple[Any, Array, Array, Array, Array], step_index: Array
         ) -> tuple[tuple[Any, Array, Array, Array, Array], Mapping[str, Array]]:
             (
                 env_state,
@@ -703,6 +824,201 @@ def make_policy_evaluator(
                     current_hard_violation=current_hard_violation,
                     current_min_hazard_dist=current_min_hazard_dist,
                 )
+                if run_multistep_counterfactual_probe:
+                    max_states = config.counterfactual_probe_max_states
+                    active = jnp.asarray(max_states <= 0) | (
+                        step_index < max_states
+                    )
+
+                    def extract_step_safety(candidate_transition: Any) -> tuple[
+                        Array, Array, Array, Array
+                    ]:
+                        extras = candidate_transition.extras
+                        true_cost = jnp.asarray(
+                            extras.get("cost", reference), dtype=jnp.float32
+                        )
+                        hard_violation = jnp.asarray(
+                            extras.get("hard_violation", (true_cost > 0.0)),
+                            dtype=jnp.float32,
+                        )
+                        hazard_violation = jnp.asarray(
+                            extras.get("hazard_violation", hard_violation),
+                            dtype=jnp.float32,
+                        )
+                        min_hazard_dist = jnp.asarray(
+                            extras.get(
+                                "min_hazard_dist",
+                                jnp.full_like(
+                                    true_cost, -1.0, dtype=jnp.float32
+                                ),
+                            ),
+                            dtype=jnp.float32,
+                        )
+                        return (
+                            true_cost,
+                            hard_violation,
+                            hazard_violation,
+                            min_hazard_dist,
+                        )
+
+                    def compute_multistep() -> dict[str, Array]:
+                        def rollout_candidate(candidate_action: Array) -> tuple[
+                            Array, Array, Array, Array
+                        ]:
+                            def rollout_step(
+                                carry: tuple[Any, Array, Array, Array, Array],
+                                horizon_index: Array,
+                            ) -> tuple[
+                                tuple[Any, Array, Array, Array, Array],
+                                tuple[Array, Array, Array, Array],
+                            ]:
+                                (
+                                    rollout_state,
+                                    cost_acc,
+                                    hard_acc,
+                                    hazard_acc,
+                                    discount,
+                                ) = carry
+                                rollout_obs = _real_state_observation(
+                                    env_adapter, rollout_state
+                                )
+                                rollout_goal = _real_rollout_goal(
+                                    env_adapter, rollout_state, config
+                                )
+                                actor_follow_action = _deterministic_action(
+                                    objects.actor,
+                                    actor_params,
+                                    rollout_obs,
+                                    rollout_goal,
+                                    config,
+                                )
+                                rollout_action = jnp.where(
+                                    horizon_index == 0,
+                                    candidate_action,
+                                    actor_follow_action,
+                                )
+                                next_rollout_state, rollout_transition = (
+                                    env_adapter.step(rollout_state, rollout_action)
+                                )
+                                (
+                                    step_cost,
+                                    step_hard,
+                                    step_hazard,
+                                    step_min_hazard_dist,
+                                ) = extract_step_safety(rollout_transition)
+                                return (
+                                    next_rollout_state,
+                                    cost_acc + discount * step_cost,
+                                    hard_acc + discount * step_hard,
+                                    hazard_acc + discount * step_hazard,
+                                    discount * config.gamma_c,
+                                ), (
+                                    cost_acc + discount * step_cost,
+                                    hard_acc + discount * step_hard,
+                                    hazard_acc + discount * step_hazard,
+                                    step_min_hazard_dist,
+                                )
+
+                            init = (
+                                env_state,
+                                jnp.zeros((config.num_envs,), dtype=jnp.float32),
+                                jnp.zeros((config.num_envs,), dtype=jnp.float32),
+                                jnp.zeros((config.num_envs,), dtype=jnp.float32),
+                                jnp.ones((config.num_envs,), dtype=jnp.float32),
+                            )
+                            _, history = jax.lax.scan(
+                                rollout_step,
+                                init,
+                                jnp.arange(max_multistep_horizon),
+                            )
+                            (
+                                cost_history,
+                                hard_history,
+                                hazard_history,
+                                min_hazard_history,
+                            ) = history
+                            return (
+                                cost_history,
+                                hard_history,
+                                hazard_history,
+                                min_hazard_history,
+                            )
+
+                        (
+                            cost_histories,
+                            hard_histories,
+                            hazard_histories,
+                            min_hazard_histories,
+                        ) = jax.vmap(rollout_candidate)(candidate_actions)
+                        metrics: dict[str, Array] = {}
+                        for horizon in multistep_horizons:
+                            horizon_index = horizon - 1
+                            prefix = f"cf_{horizon}_"
+                            min_hazard_over_h = jnp.min(
+                                min_hazard_histories[:, :horizon], axis=1
+                            )
+                            final_hazard_dist = min_hazard_histories[
+                                :, horizon_index
+                            ]
+                            metrics.update(
+                                _multistep_counterfactual_summary(
+                                    horizon=horizon,
+                                    qcs=qcs,
+                                    cost_return=cost_histories[:, horizon_index],
+                                    hard_return=hard_histories[:, horizon_index],
+                                    hazard_return=hazard_histories[:, horizon_index],
+                                    current_cost=current_cost,
+                                    current_hard_violation=current_hard_violation,
+                                    current_min_hazard_dist=current_min_hazard_dist,
+                                )
+                            )
+                            metrics[f"{prefix}min_hazard_dist_over_h_spread"] = (
+                                jnp.mean(
+                                    jnp.max(min_hazard_over_h, axis=0)
+                                    - jnp.min(min_hazard_over_h, axis=0)
+                                )
+                            )
+                            metrics[f"{prefix}final_hazard_dist_spread"] = jnp.mean(
+                                jnp.max(final_hazard_dist, axis=0)
+                                - jnp.min(final_hazard_dist, axis=0)
+                            )
+                        metrics["multistep_cf_active"] = jnp.asarray(
+                            1.0, dtype=jnp.float32
+                        )
+                        return metrics
+
+                    def zero_multistep() -> dict[str, Array]:
+                        metrics: dict[str, Array] = {}
+                        for horizon in multistep_horizons:
+                            template = _multistep_counterfactual_summary(
+                                horizon=horizon,
+                                qcs=jnp.zeros_like(qcs),
+                                cost_return=jnp.zeros_like(qcs),
+                                hard_return=jnp.zeros_like(qcs),
+                                hazard_return=jnp.zeros_like(qcs),
+                                current_cost=current_cost,
+                                current_hard_violation=current_hard_violation,
+                                current_min_hazard_dist=current_min_hazard_dist,
+                            )
+                            metrics.update(
+                                {name: jnp.zeros_like(value) for name, value in template.items()}
+                            )
+                            prefix = f"cf_{horizon}_"
+                            metrics[f"{prefix}min_hazard_dist_over_h_spread"] = (
+                                jnp.asarray(0.0, dtype=jnp.float32)
+                            )
+                            metrics[f"{prefix}final_hazard_dist_spread"] = (
+                                jnp.asarray(0.0, dtype=jnp.float32)
+                            )
+                        metrics["multistep_cf_active"] = jnp.asarray(
+                            0.0, dtype=jnp.float32
+                        )
+                        return metrics
+
+                    probe_metrics = {
+                        **probe_metrics,
+                        **jax.lax.cond(active, compute_multistep, zero_multistep),
+                    }
             robot_xy_after = _real_robot_xy(env_adapter, next_env_state)
             reference = jnp.zeros((config.num_envs,), dtype=jnp.float32)
             cost = jnp.asarray(
@@ -781,7 +1097,19 @@ def make_policy_evaluator(
                     "frozen_goal_dist",
                 }:
                     continue
-                metrics[key] = jnp.mean(jnp.asarray(value, dtype=jnp.float32))
+                value = jnp.asarray(value, dtype=jnp.float32)
+                if (
+                    run_multistep_counterfactual_probe
+                    and key.startswith(multistep_metric_prefixes)
+                    and "multistep_cf_active" in trajectory
+                ):
+                    active = jnp.asarray(
+                        trajectory["multistep_cf_active"], dtype=jnp.float32
+                    )
+                    denom = jnp.maximum(jnp.sum(active), 1.0)
+                    metrics[key] = jnp.sum(value * active) / denom
+                else:
+                    metrics[key] = jnp.mean(value)
         return metrics
 
     def evaluate_toy(params: Any, key: Array) -> Mapping[str, Array]:
@@ -1649,6 +1977,9 @@ def initialize_training(
         raise ValueError("cost_risk_hazard_lidar_thresh must be positive")
     if config.cost_risk_min_fraction_available < 0.0:
         raise ValueError("cost_risk_min_fraction_available must be non-negative")
+    _parse_counterfactual_horizons(config.counterfactual_probe_horizons)
+    if config.counterfactual_probe_max_states < 0:
+        raise ValueError("counterfactual_probe_max_states must be non-negative")
     key = jax.random.PRNGKey(config.seed)
     (
         key,
@@ -1930,6 +2261,86 @@ def _format_counterfactual_probe_line(metrics: Mapping[str, Array]) -> str | Non
     )
 
 
+def _format_multistep_counterfactual_probe_lines(
+    metrics: Mapping[str, Array]
+) -> list[str]:
+    horizon_labels = sorted(
+        {
+            key.split("_", 2)[1]
+            for key in metrics
+            if key.startswith("cf_") and key.endswith("_true_cost_spread")
+        },
+        key=int,
+    )
+    lines: list[str] = []
+    for horizon in horizon_labels:
+        prefix = f"cf_{horizon}_"
+        lines.append(
+            "         "
+            f"counterfactual_H{horizon}[ "
+            f"{prefix}true_cost_spread="
+            f"{_mean_float(metrics, f'{prefix}true_cost_spread'):.2e} "
+            f"{prefix}true_hard_viol_spread="
+            f"{_mean_float(metrics, f'{prefix}true_hard_viol_spread'):.2e} "
+            f"{prefix}true_hazard_spread="
+            f"{_mean_float(metrics, f'{prefix}true_hazard_spread'):.2e} "
+            f"{prefix}frac_nonzero_cost_spread="
+            f"{_mean_float(metrics, f'{prefix}frac_nonzero_cost_spread'):.3f} "
+            f"{prefix}frac_nonzero_hard_viol_spread="
+            f"{_mean_float(metrics, f'{prefix}frac_nonzero_hard_viol_spread'):.3f} "
+            f"{prefix}frac_nonzero_hazard_spread="
+            f"{_mean_float(metrics, f'{prefix}frac_nonzero_hazard_spread'):.3f} "
+            f"{prefix}corr_qc_true_cost="
+            f"{_mean_float(metrics, f'{prefix}corr_qc_true_cost'):.3f} "
+            f"{prefix}corr_qc_true_hazard="
+            f"{_mean_float(metrics, f'{prefix}corr_qc_true_hazard'):.3f} "
+            f"{prefix}actor_true_cost_percentile="
+            f"{_mean_float(metrics, f'{prefix}actor_true_cost_percentile'):.3f} "
+            f"{prefix}actor_true_hazard_percentile="
+            f"{_mean_float(metrics, f'{prefix}actor_true_hazard_percentile'):.3f} "
+            f"{prefix}actor_qc_percentile="
+            f"{_mean_float(metrics, f'{prefix}actor_qc_percentile'):.3f} "
+            f"{prefix}best_qc_matches_best_true_cost_frac="
+            f"{_mean_float(metrics, f'{prefix}best_qc_matches_best_true_cost_frac'):.3f} "
+            f"{prefix}best_qc_matches_best_true_hazard_frac="
+            f"{_mean_float(metrics, f'{prefix}best_qc_matches_best_true_hazard_frac'):.3f} "
+            f"{prefix}qc_action_spread="
+            f"{_mean_float(metrics, f'{prefix}qc_action_spread'):.2e} "
+            f"{prefix}min_hazard_dist_over_h_spread="
+            f"{_mean_float(metrics, f'{prefix}min_hazard_dist_over_h_spread'):.2e} "
+            f"{prefix}final_hazard_dist_spread="
+            f"{_mean_float(metrics, f'{prefix}final_hazard_dist_spread'):.2e} "
+            f"{prefix}hazard_dist_available_frac="
+            f"{_mean_float(metrics, f'{prefix}hazard_dist_available_frac'):.3f} "
+            f"{prefix}costpos_frac={_mean_float(metrics, f'{prefix}costpos_frac'):.3f} "
+            f"{prefix}hardpos_frac={_mean_float(metrics, f'{prefix}hardpos_frac'):.3f} "
+            f"{prefix}haz1_frac={_mean_float(metrics, f'{prefix}haz1_frac'):.3f} "
+            f"{prefix}haz05_frac={_mean_float(metrics, f'{prefix}haz05_frac'):.3f} "
+            f"{prefix}haz025_frac={_mean_float(metrics, f'{prefix}haz025_frac'):.3f} "
+            f"{prefix}true_cost_spread_costpos="
+            f"{_mean_float(metrics, f'{prefix}true_cost_spread_costpos'):.2e} "
+            f"{prefix}corr_qc_true_cost_costpos="
+            f"{_mean_float(metrics, f'{prefix}corr_qc_true_cost_costpos'):.3f} "
+            f"{prefix}true_cost_spread_hardpos="
+            f"{_mean_float(metrics, f'{prefix}true_cost_spread_hardpos'):.2e} "
+            f"{prefix}corr_qc_true_cost_hardpos="
+            f"{_mean_float(metrics, f'{prefix}corr_qc_true_cost_hardpos'):.3f} "
+            f"{prefix}true_cost_spread_haz1="
+            f"{_mean_float(metrics, f'{prefix}true_cost_spread_haz1'):.2e} "
+            f"{prefix}corr_qc_true_cost_haz1="
+            f"{_mean_float(metrics, f'{prefix}corr_qc_true_cost_haz1'):.3f} "
+            f"{prefix}true_cost_spread_haz05="
+            f"{_mean_float(metrics, f'{prefix}true_cost_spread_haz05'):.2e} "
+            f"{prefix}corr_qc_true_cost_haz05="
+            f"{_mean_float(metrics, f'{prefix}corr_qc_true_cost_haz05'):.3f} "
+            f"{prefix}true_cost_spread_haz025="
+            f"{_mean_float(metrics, f'{prefix}true_cost_spread_haz025'):.2e} "
+            f"{prefix}corr_qc_true_cost_haz025="
+            f"{_mean_float(metrics, f'{prefix}corr_qc_true_cost_haz025'):.3f}]"
+        )
+    return lines
+
+
 def format_epoch_metrics(
     epoch: int,
     total_epochs: int,
@@ -2082,6 +2493,7 @@ def format_epoch_metrics(
                 is not None
                 else []
             ),
+            *_format_multistep_counterfactual_probe_lines(metrics),
             (
                 "         "
                 f"nan[obs_c={_max_flag(metrics, 'nan_obs_critic')} "

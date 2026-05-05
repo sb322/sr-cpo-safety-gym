@@ -77,6 +77,46 @@ EVAL_METRIC_KEYS = (
     "eval_success_count_std1",
     "eval_cost_return_std1",
 )
+MULTISTEP_COUNTERFACTUAL_HORIZONS = (5, 10, 20)
+MULTISTEP_COUNTERFACTUAL_BASE_KEYS = (
+    "true_cost_spread",
+    "true_hard_viol_spread",
+    "true_hazard_spread",
+    "frac_nonzero_cost_spread",
+    "frac_nonzero_hard_viol_spread",
+    "frac_nonzero_hazard_spread",
+    "corr_qc_true_cost",
+    "corr_qc_true_hazard",
+    "actor_true_cost_percentile",
+    "actor_true_hazard_percentile",
+    "actor_qc_percentile",
+    "best_qc_matches_best_true_cost_frac",
+    "best_qc_matches_best_true_hazard_frac",
+    "qc_action_spread",
+    "min_hazard_dist_over_h_spread",
+    "final_hazard_dist_spread",
+    "hazard_dist_available_frac",
+    "costpos_frac",
+    "hardpos_frac",
+    "haz1_frac",
+    "haz05_frac",
+    "haz025_frac",
+    "true_cost_spread_costpos",
+    "corr_qc_true_cost_costpos",
+    "true_cost_spread_hardpos",
+    "corr_qc_true_cost_hardpos",
+    "true_cost_spread_haz1",
+    "corr_qc_true_cost_haz1",
+    "true_cost_spread_haz05",
+    "corr_qc_true_cost_haz05",
+    "true_cost_spread_haz025",
+    "corr_qc_true_cost_haz025",
+)
+MULTISTEP_COUNTERFACTUAL_METRIC_KEYS = tuple(
+    f"cf_{horizon}_{key}"
+    for horizon in MULTISTEP_COUNTERFACTUAL_HORIZONS
+    for key in MULTISTEP_COUNTERFACTUAL_BASE_KEYS
+)
 COUNTERFACTUAL_METRIC_KEYS = (
     "true_action_cost_spread",
     "true_action_hard_viol_spread",
@@ -107,6 +147,7 @@ COUNTERFACTUAL_METRIC_KEYS = (
     "corr_qc_true_cost_haz05",
     "true_action_cost_spread_haz025",
     "corr_qc_true_cost_haz025",
+    *MULTISTEP_COUNTERFACTUAL_METRIC_KEYS,
 )
 FIELDNAMES = (
     "file",
@@ -206,7 +247,7 @@ def parse_log(path: Path) -> dict[str, str]:
             parsed = _parse_assignments(line)
             if parsed:
                 last_metrics.update(parsed)
-        elif "counterfactual[" in line:
+        elif "counterfactual[" in line or "counterfactual_H" in line:
             parsed = _parse_assignments(line)
             if parsed:
                 last_metrics.update(parsed)

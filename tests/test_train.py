@@ -376,6 +376,9 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().counterfactual_probe_random_actions == 16
     assert TrainConfig().counterfactual_probe_perturb_actions == 16
     assert TrainConfig().counterfactual_probe_perturb_std == 0.1
+    assert TrainConfig().enable_multistep_counterfactual_probes is False
+    assert TrainConfig().counterfactual_probe_horizons == "5,10,20"
+    assert TrainConfig().counterfactual_probe_max_states == 0
 
 
 def test_run_training_prints_required_probe_sections() -> None:
@@ -551,6 +554,38 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "corr_qc_true_cost_haz05": jnp.asarray([0.55]),
         "true_action_cost_spread_haz025": jnp.asarray([0.09]),
         "corr_qc_true_cost_haz025": jnp.asarray([0.65]),
+        "cf_5_true_cost_spread": jnp.asarray([0.12]),
+        "cf_5_true_hard_viol_spread": jnp.asarray([0.34]),
+        "cf_5_true_hazard_spread": jnp.asarray([0.23]),
+        "cf_5_frac_nonzero_cost_spread": jnp.asarray([0.56]),
+        "cf_5_frac_nonzero_hard_viol_spread": jnp.asarray([0.45]),
+        "cf_5_frac_nonzero_hazard_spread": jnp.asarray([0.67]),
+        "cf_5_corr_qc_true_cost": jnp.asarray([0.11]),
+        "cf_5_corr_qc_true_hazard": jnp.asarray([-0.22]),
+        "cf_5_actor_true_cost_percentile": jnp.asarray([0.33]),
+        "cf_5_actor_true_hazard_percentile": jnp.asarray([0.44]),
+        "cf_5_actor_qc_percentile": jnp.asarray([0.55]),
+        "cf_5_best_qc_matches_best_true_cost_frac": jnp.asarray([0.66]),
+        "cf_5_best_qc_matches_best_true_hazard_frac": jnp.asarray([0.77]),
+        "cf_5_qc_action_spread": jnp.asarray([0.88]),
+        "cf_5_min_hazard_dist_over_h_spread": jnp.asarray([0.91]),
+        "cf_5_final_hazard_dist_spread": jnp.asarray([0.92]),
+        "cf_5_hazard_dist_available_frac": jnp.asarray([1.0]),
+        "cf_5_costpos_frac": jnp.asarray([0.12]),
+        "cf_5_hardpos_frac": jnp.asarray([0.13]),
+        "cf_5_haz1_frac": jnp.asarray([0.14]),
+        "cf_5_haz05_frac": jnp.asarray([0.15]),
+        "cf_5_haz025_frac": jnp.asarray([0.16]),
+        "cf_5_true_cost_spread_costpos": jnp.asarray([0.17]),
+        "cf_5_corr_qc_true_cost_costpos": jnp.asarray([0.18]),
+        "cf_5_true_cost_spread_hardpos": jnp.asarray([0.19]),
+        "cf_5_corr_qc_true_cost_hardpos": jnp.asarray([0.20]),
+        "cf_5_true_cost_spread_haz1": jnp.asarray([0.21]),
+        "cf_5_corr_qc_true_cost_haz1": jnp.asarray([0.22]),
+        "cf_5_true_cost_spread_haz05": jnp.asarray([0.23]),
+        "cf_5_corr_qc_true_cost_haz05": jnp.asarray([0.24]),
+        "cf_5_true_cost_spread_haz025": jnp.asarray([0.25]),
+        "cf_5_corr_qc_true_cost_haz025": jnp.asarray([0.26]),
         "nu_c": jnp.asarray([0.01]),
         "target_entropy": jnp.asarray([-1.0]),
         "alpha_clip": jnp.asarray([1.0]),
@@ -691,6 +726,18 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "corr_qc_true_cost_haz05=0.550" in text
     assert "true_action_cost_spread_haz025=9.00e-02" in text
     assert "corr_qc_true_cost_haz025=0.650" in text
+    assert "counterfactual_H5[ cf_5_true_cost_spread=1.20e-01" in text
+    assert "cf_5_true_hard_viol_spread=3.40e-01" in text
+    assert "cf_5_true_hazard_spread=2.30e-01" in text
+    assert "cf_5_frac_nonzero_cost_spread=0.560" in text
+    assert "cf_5_corr_qc_true_cost=0.110" in text
+    assert "cf_5_actor_qc_percentile=0.550" in text
+    assert "cf_5_best_qc_matches_best_true_cost_frac=0.660" in text
+    assert "cf_5_qc_action_spread=8.80e-01" in text
+    assert "cf_5_min_hazard_dist_over_h_spread=9.10e-01" in text
+    assert "cf_5_final_hazard_dist_spread=9.20e-01" in text
+    assert "cf_5_true_cost_spread_haz025=2.50e-01" in text
+    assert "cf_5_corr_qc_true_cost_haz025=0.260" in text
     assert "nu_c=1.0e-02" in text
     assert "eval_ever_reached=0.2000" in text
     assert "eval_first_hit_time=12.00" in text
