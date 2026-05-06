@@ -101,6 +101,8 @@ class TrainConfig:
     rho: float = 0.1
     critic_score_mode: str = "cosine"
     gamma_c: float = 0.99
+    cost_mode: str = "sparse"
+    cost_dense_prox_tau: float = 0.5
     cost_return_loss_weight: float = 0.0
     cost_risk_replay_ratio: float = 0.0
     cost_risk_hazard_lidar_thresh: float = 0.5
@@ -319,6 +321,16 @@ def _mean_transition_extra(
     extras: Mapping[str, Array], key: str, reference: Array
 ) -> Array:
     return jnp.mean(jnp.asarray(extras.get(key, jnp.zeros_like(reference))))
+
+
+def _transition_sparse_cost(extras: Mapping[str, Array]) -> Array:
+    cost = jnp.asarray(extras["cost"], dtype=jnp.float32)
+    return jnp.asarray(extras.get("sparse_cost", cost), dtype=jnp.float32)
+
+
+def _transition_dense_cost(extras: Mapping[str, Array]) -> Array:
+    cost = jnp.asarray(extras["cost"], dtype=jnp.float32)
+    return jnp.asarray(extras.get("dense_cost", cost), dtype=jnp.float32)
 
 
 def _goal_distance_metrics(goal_dist: Array) -> dict[str, Array]:
@@ -673,7 +685,9 @@ def make_policy_evaluator(
         config.counterfactual_probe_horizons
     )
     max_multistep_horizon = max(multistep_horizons, default=0)
-    multistep_metric_prefixes = tuple(f"cf_{horizon}_" for horizon in multistep_horizons)
+    multistep_metric_prefixes = tuple(
+        f"cf_{horizon}_" for horizon in multistep_horizons
+    )
 
     def evaluate_real(params: Any, key: Array) -> Mapping[str, Array]:
         if env_adapter is None:
@@ -1000,9 +1014,11 @@ def make_policy_evaluator(
                                 current_hard_violation=current_hard_violation,
                                 current_min_hazard_dist=current_min_hazard_dist,
                             )
-                            metrics.update(
-                                {name: jnp.zeros_like(value) for name, value in template.items()}
-                            )
+                            zero_metrics = {
+                                name: jnp.zeros_like(value)
+                                for name, value in template.items()
+                            }
+                            metrics.update(zero_metrics)
                             prefix = f"cf_{horizon}_"
                             metrics[f"{prefix}min_hazard_dist_over_h_spread"] = (
                                 jnp.asarray(0.0, dtype=jnp.float32)
@@ -1022,7 +1038,10 @@ def make_policy_evaluator(
             robot_xy_after = _real_robot_xy(env_adapter, next_env_state)
             reference = jnp.zeros((config.num_envs,), dtype=jnp.float32)
             cost = jnp.asarray(
-                transition.extras.get("cost", reference), dtype=jnp.float32
+                transition.extras.get(
+                    "sparse_cost", transition.extras.get("cost", reference)
+                ),
+                dtype=jnp.float32,
             )
             goal_reached = jnp.asarray(
                 transition.extras.get("goal_reached", reference),
@@ -1284,10 +1303,14 @@ def _collect_toy_trajectory(
         d_wall=transitions.extras["d_wall"],
         hard_violations=transitions.extras["hard_violation"],
     )
+    sparse_cost = _transition_sparse_cost(transitions.extras)
+    dense_cost = _transition_dense_cost(transitions.extras)
     goal_metrics = _goal_distance_metrics(transitions.extras["goal_dist"])
     metrics = {
         "reward": jnp.mean(transitions.reward),
-        "cost": jnp.mean(transitions.extras["cost"]),
+        "cost": jnp.mean(sparse_cost),
+        "dense_cost_mean": jnp.mean(dense_cost),
+        "dense_cost_std": jnp.std(dense_cost),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
         "hazard_viol": _mean_transition_extra(
             transitions.extras, "hazard_violation", transitions.extras["cost"]
@@ -1426,10 +1449,14 @@ def _collect_real_trajectory(
         d_wall=transitions.extras["d_wall"],
         hard_violations=transitions.extras["hard_violation"],
     )
+    sparse_cost = _transition_sparse_cost(transitions.extras)
+    dense_cost = _transition_dense_cost(transitions.extras)
     goal_metrics = _goal_distance_metrics(transitions.extras["goal_dist"])
     metrics = {
         "reward": jnp.mean(transitions.reward),
-        "cost": jnp.mean(transitions.extras["cost"]),
+        "cost": jnp.mean(sparse_cost),
+        "dense_cost_mean": jnp.mean(dense_cost),
+        "dense_cost_std": jnp.std(dense_cost),
         "hard_viol": jnp.mean(transitions.extras["hard_violation"]),
         "hazard_viol": _mean_transition_extra(
             transitions.extras, "hazard_violation", transitions.extras["cost"]
@@ -1839,6 +1866,7 @@ def _sgd_step(
         ),
         "alpha_clip": jnp.minimum(jnp.exp(log_alpha) / config.alpha_max, 1.0),
         "cost": cc_aux["mean_cost"],
+        "cost_target": cc_aux["mean_cost"],
         "qc": cc_aux["mean_qc"],
         "td_target": cc_aux["mean_target"],
         "cost_return": cc_aux["mean_cost_return"],
@@ -1908,6 +1936,9 @@ def make_training_epoch(
         )
         metrics = _mean_metrics(sgd_metrics)
         metrics["hard_viol"] = collect_metrics["hard_viol"]
+        metrics["cost"] = collect_metrics["cost"]
+        metrics["dense_cost_mean"] = collect_metrics["dense_cost_mean"]
+        metrics["dense_cost_std"] = collect_metrics["dense_cost_std"]
         metrics["rollout_cost"] = collect_metrics["cost"]
         metrics["rollout_reward"] = collect_metrics["reward"]
         metrics["hazard_viol"] = collect_metrics["hazard_viol"]
@@ -1971,6 +2002,10 @@ def initialize_training(
         raise ValueError("xy goal modes require goal_dim=2")
     if config.critic_score_mode not in {"cosine", "l2"}:
         raise ValueError("critic_score_mode must be 'cosine' or 'l2'")
+    if config.cost_mode not in {"sparse", "dense_proximity"}:
+        raise ValueError("cost_mode must be 'sparse' or 'dense_proximity'")
+    if config.cost_dense_prox_tau <= 0.0:
+        raise ValueError("cost_dense_prox_tau must be positive")
     if not 0.0 <= config.cost_risk_replay_ratio <= 1.0:
         raise ValueError("cost_risk_replay_ratio must be in [0, 1]")
     if config.cost_risk_hazard_lidar_thresh <= 0.0:
@@ -1999,6 +2034,8 @@ def initialize_training(
             goal_mode=config.goal_mode,
             mask_native_goal_lidar=config.mask_native_goal_lidar,
             probe_counterfactual_costs=config.probe_counterfactual_costs,
+            cost_mode=config.cost_mode,
+            cost_dense_prox_tau=config.cost_dense_prox_tau,
         )
         env_state, reset_transition = env_adapter.reset(env_key)
         runtime_observation_dim = int(reset_transition.observation.shape[-1])
@@ -2275,6 +2312,12 @@ def _format_multistep_counterfactual_probe_lines(
     lines: list[str] = []
     for horizon in horizon_labels:
         prefix = f"cf_{horizon}_"
+        best_cost_frac = _mean_float(
+            metrics, f"{prefix}best_qc_matches_best_true_cost_frac"
+        )
+        best_hazard_frac = _mean_float(
+            metrics, f"{prefix}best_qc_matches_best_true_hazard_frac"
+        )
         lines.append(
             "         "
             f"counterfactual_H{horizon}[ "
@@ -2301,9 +2344,9 @@ def _format_multistep_counterfactual_probe_lines(
             f"{prefix}actor_qc_percentile="
             f"{_mean_float(metrics, f'{prefix}actor_qc_percentile'):.3f} "
             f"{prefix}best_qc_matches_best_true_cost_frac="
-            f"{_mean_float(metrics, f'{prefix}best_qc_matches_best_true_cost_frac'):.3f} "
+            f"{best_cost_frac:.3f} "
             f"{prefix}best_qc_matches_best_true_hazard_frac="
-            f"{_mean_float(metrics, f'{prefix}best_qc_matches_best_true_hazard_frac'):.3f} "
+            f"{best_hazard_frac:.3f} "
             f"{prefix}qc_action_spread="
             f"{_mean_float(metrics, f'{prefix}qc_action_spread'):.2e} "
             f"{prefix}min_hazard_dist_over_h_spread="
@@ -2364,6 +2407,8 @@ def format_epoch_metrics(
                 "         "
                 f"hard_viol={_mean_float(metrics, 'hard_viol'):.4f} "
                 f"cost={_mean_float(metrics, 'cost'):.4f} "
+                f"dense_cost_mean={_mean_float(metrics, 'dense_cost_mean'):.4f} "
+                f"dense_cost_std={_mean_float(metrics, 'dense_cost_std'):.4f} "
                 f"hazard={_mean_float(metrics, 'hazard_viol'):.4f} "
                 f"vase_contact={_mean_float(metrics, 'vase_contact'):.4f} "
                 f"robot_vase={_mean_float(metrics, 'robot_vase_contact'):.4f} "
@@ -2406,6 +2451,7 @@ def format_epoch_metrics(
                 f"Ĵ_c={_mean_float(metrics, 'jc_hat'):.4f} "
                 f"Qc={_mean_float(metrics, 'qc'):.4f} "
                 f"TD={_mean_float(metrics, 'td_target'):.4f} "
+                f"c_target={_mean_float(metrics, 'cost_target'):.4f} "
                 f"limit={_mean_float(metrics, 'cost_limit'):.2e} "
                 f"pid_err={_mean_float(metrics, 'pid_error'):.2e} "
                 f"S={_mean_float(metrics, 'pid_integral'):.2e} "

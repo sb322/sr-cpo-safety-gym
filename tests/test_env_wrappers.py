@@ -233,6 +233,52 @@ def test_safety_components_explain_hazard_and_vase_displacement() -> None:
     )
 
 
+def test_dense_proximity_cost_keeps_hard_violation_sparse() -> None:
+    adapter = object.__new__(SafeLearningGoToGoalAdapter)
+    adapter.cost_mode = "dense_proximity"
+    adapter.cost_dense_prox_tau = 0.5
+    sparse_cost = jnp.asarray([0.0, 1.0], dtype=jnp.float32)
+    safety = {
+        "min_hazard_dist": jnp.asarray([0.5, 0.0], dtype=jnp.float32),
+    }
+
+    dense_cost = adapter._dense_proximity_cost(sparse_cost, safety)
+    cost, dense_cost_again, _ = adapter._cost_target_and_safety(
+        SimpleNamespace(data=None), sparse_cost
+    )
+    extras = SafeLearningGoToGoalAdapter._extras(
+        state_info={
+            "rng": jnp.zeros((2,), dtype=jnp.float32),
+            "truncation": jnp.zeros((2,), dtype=jnp.float32),
+            "last_goal_dist": jnp.zeros((2,), dtype=jnp.float32),
+            "goal_reached": jnp.zeros((2,), dtype=jnp.float32),
+        },
+        state_obs=jnp.zeros((2, 5), dtype=jnp.float32),
+        next_obs=jnp.zeros((2, 5), dtype=jnp.float32),
+        cost=dense_cost,
+        sparse_cost=sparse_cost,
+        dense_cost=dense_cost,
+        safety_components=safety,
+    )
+
+    assert bool(
+        jnp.allclose(
+            dense_cost,
+            jnp.asarray([float(jnp.exp(-1.0)), 1.0], dtype=jnp.float32),
+        )
+    )
+    assert bool(jnp.all(cost >= 0.0))
+    assert bool(jnp.all(dense_cost_again >= 0.0))
+    assert bool(jnp.allclose(extras["cost"], dense_cost))
+    assert bool(jnp.allclose(extras["sparse_cost"], sparse_cost))
+    assert bool(jnp.allclose(extras["dense_cost"], dense_cost))
+    assert bool(
+        jnp.allclose(
+            extras["hard_violation"], jnp.asarray([0.0, 1.0], dtype=jnp.float32)
+        )
+    )
+
+
 def test_safety_components_disable_overexplaining_vase_probe() -> None:
     adapter = object.__new__(SafeLearningGoToGoalAdapter)
     adapter.base_env = SimpleNamespace(

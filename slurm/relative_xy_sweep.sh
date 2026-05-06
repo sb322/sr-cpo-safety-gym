@@ -71,6 +71,8 @@ COST_RETURN_LOSS_WEIGHT="${COST_RETURN_LOSS_WEIGHT_OVERRIDE:-0.0}"
 COST_RISK_REPLAY_RATIO="${COST_RISK_REPLAY_RATIO_OVERRIDE:-0.0}"
 COST_RISK_HAZARD_LIDAR_THRESH="${COST_RISK_HAZARD_LIDAR_THRESH_OVERRIDE:-0.5}"
 COST_RISK_MIN_FRACTION_AVAILABLE="${COST_RISK_MIN_FRACTION_AVAILABLE_OVERRIDE:-0.0}"
+COST_MODE="${COST_MODE_OVERRIDE:-sparse}"
+COST_DENSE_PROX_TAU="${COST_DENSE_PROX_TAU_OVERRIDE:-0.5}"
 COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"
 PID_KP="${PID_KP_OVERRIDE:-5.0}"
 PID_KI="${PID_KI_OVERRIDE:-0.1}"
@@ -146,6 +148,8 @@ echo "COST_RETURN_LOSS_WEIGHT=$COST_RETURN_LOSS_WEIGHT"
 echo "COST_RISK_REPLAY_RATIO=$COST_RISK_REPLAY_RATIO"
 echo "COST_RISK_HAZARD_LIDAR_THRESH=$COST_RISK_HAZARD_LIDAR_THRESH"
 echo "COST_RISK_MIN_FRACTION_AVAILABLE=$COST_RISK_MIN_FRACTION_AVAILABLE"
+echo "COST_MODE=$COST_MODE"
+echo "COST_DENSE_PROX_TAU=$COST_DENSE_PROX_TAU"
 echo "SEED=$SEED"
 echo "COST_LIMIT=$COST_LIMIT"
 echo "PID_KP=$PID_KP"
@@ -238,6 +242,13 @@ assert "probe_counterfactual_costs" in src_train and "cost_action_minus_zero" in
     "real counterfactual cost probes missing from train.py"
 assert "cost_return_loss_weight" in src_train and "Qc-Jc=" in src_train, \
     "cost-return diagnostic/training path missing from train.py"
+assert "cost_mode: str = \"sparse\"" in src_train and "dense_proximity" in src_train, \
+    "config-driven dense proximity cost mode missing from train.py"
+assert "cost_dense_prox_tau: float = 0.5" in src_train, \
+    "dense proximity tau config missing from train.py"
+assert "dense_cost_mean=" in src_train and "dense_cost_std=" in src_train \
+    and "sparse_cost" in src_env and "dense_cost" in src_env, \
+    "dense/sparse cost separation diagnostics missing"
 assert "pid_integral_decay" in src_train and "Sdecay=" in src_train, \
     "PID integral decay/release path missing from train.py"
 assert "cost_return" in src_replay and "cost_return_gamma" in src_replay, \
@@ -265,22 +276,28 @@ PYCHECK
 
 echo ""
 echo "===== ENV PREFLIGHT ====="
-"$PYTHON" - "$GOAL_MODE" "$MASK_NATIVE_GOAL_LIDAR" <<'PYCHECK'
+"$PYTHON" - "$GOAL_MODE" "$MASK_NATIVE_GOAL_LIDAR" "$COST_MODE" "$COST_DENSE_PROX_TAU" <<'PYCHECK'
 import sys
 import jax
 from sr_cpo.env_wrappers import make_safe_learning_go_to_goal
 
 goal_mode = sys.argv[1]
 mask_native_goal_lidar = sys.argv[2] == "true"
+cost_mode = sys.argv[3]
+cost_dense_prox_tau = float(sys.argv[4])
 adapter = make_safe_learning_go_to_goal(
     num_envs=4,
     episode_length=1000,
     goal_mode=goal_mode,
     mask_native_goal_lidar=mask_native_goal_lidar,
+    cost_mode=cost_mode,
+    cost_dense_prox_tau=cost_dense_prox_tau,
 )
 state, transition = adapter.reset(jax.random.PRNGKey(0))
 print(f"obs.shape = {transition.observation.shape}")
 print(f"cost = {transition.extras['cost']}")
+print(f"sparse_cost = {transition.extras['sparse_cost']}")
+print(f"dense_cost = {transition.extras['dense_cost']}")
 print(f"goal_dist = {transition.extras['goal_dist']}")
 print(f"goal_reached = {transition.extras['goal_reached']}")
 print(f"desired_goal = {transition.extras['desired_goal']}")
@@ -334,6 +351,8 @@ echo "ENTRYPOINT=$ENTRYPOINT"
     --rho 0.1 \
     --critic-score-mode "$SCORE_MODE" \
     --gamma-c 0.99 \
+    --cost-mode "$COST_MODE" \
+    --cost-dense-prox-tau "$COST_DENSE_PROX_TAU" \
     --target-update-rate 0.005 \
     --nu-f 1.0 \
     --nu-c "$NU_C" \

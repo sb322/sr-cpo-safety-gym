@@ -371,6 +371,8 @@ def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
 
 def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_limit == 0.0001
+    assert TrainConfig().cost_mode == "sparse"
+    assert TrainConfig().cost_dense_prox_tau == 0.5
     assert TrainConfig().cost_risk_replay_ratio == 0.0
     assert TrainConfig().eval_counterfactual_action_probes is False
     assert TrainConfig().counterfactual_probe_random_actions == 16
@@ -406,6 +408,8 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "a_loss": jnp.asarray([-1.0]),
         "hard_viol": jnp.asarray([0.0]),
         "cost": jnp.asarray([0.0]),
+        "dense_cost_mean": jnp.asarray([0.12]),
+        "dense_cost_std": jnp.asarray([0.03]),
         "hazard_viol": jnp.asarray([0.125]),
         "robot_vase_contact": jnp.asarray([0.0625]),
         "point_vase_contact": jnp.asarray([0.03125]),
@@ -448,6 +452,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "jc_hat": jnp.asarray([0.0]),
         "qc": jnp.asarray([0.0]),
         "td_target": jnp.asarray([0.25]),
+        "cost_target": jnp.asarray([0.12]),
         "cost_return": jnp.asarray([0.75]),
         "qc_return_error": jnp.asarray([-0.75]),
         "cost_return_loss_weight": jnp.asarray([1.0]),
@@ -618,6 +623,8 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "actor[α=1.0000" in text
     assert "rew=-1.2345" in text
     assert "hazard=0.1250" in text
+    assert "dense_cost_mean=0.1200" in text
+    assert "dense_cost_std=0.0300" in text
     assert "vase_contact=0.0938" in text
     assert "robot_vase=0.0625" in text
     assert "point_vase=0.0312" in text
@@ -659,6 +666,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "Sdecay=0.95" in text
     assert "λraw=-1.00e-03" in text
     assert "TD=0.2500" in text
+    assert "c_target=0.1200" in text
     assert "Jc_mc=0.7500" in text
     assert "Qc-Jc=-0.7500" in text
     assert "mcw=1.0e+00" in text

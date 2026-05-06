@@ -20,6 +20,9 @@ _OBS_SLICE_GOAL_MODE = "obs_slice"
 _XY_GOAL_MODE = "xy"
 _RELATIVE_XY_GOAL_MODE = "relative_xy"
 _XY_GOAL_MODES = {_XY_GOAL_MODE, _RELATIVE_XY_GOAL_MODE}
+_COST_MODE_SPARSE = "sparse"
+_COST_MODE_DENSE_PROXIMITY = "dense_proximity"
+_COST_MODES = {_COST_MODE_SPARSE, _COST_MODE_DENSE_PROXIMITY}
 _GOAL_LIDAR_START = 16
 _GOAL_LIDAR_END = 32
 
@@ -136,6 +139,8 @@ class SafeLearningGoToGoalAdapter:
         goal_mode: str = _OBS_SLICE_GOAL_MODE,
         mask_native_goal_lidar: bool = False,
         probe_counterfactual_costs: bool = False,
+        cost_mode: str = _COST_MODE_SPARSE,
+        cost_dense_prox_tau: float = 0.5,
         **env_kwargs: Any,
     ) -> None:
         if goal_mode not in {_OBS_SLICE_GOAL_MODE, *_XY_GOAL_MODES}:
@@ -143,6 +148,13 @@ class SafeLearningGoToGoalAdapter:
                 "goal_mode must be 'obs_slice', 'xy', or 'relative_xy', "
                 f"got {goal_mode!r}"
             )
+        if cost_mode not in _COST_MODES:
+            raise ValueError(
+                "cost_mode must be 'sparse' or 'dense_proximity', "
+                f"got {cost_mode!r}"
+            )
+        if cost_dense_prox_tau <= 0.0:
+            raise ValueError("cost_dense_prox_tau must be positive")
         base_env = (
             env if env is not None else _load_safe_learning_go_to_goal(**env_kwargs)
         )
@@ -156,6 +168,8 @@ class SafeLearningGoToGoalAdapter:
         self.goal_mode = goal_mode
         self.mask_native_goal_lidar = mask_native_goal_lidar
         self.probe_counterfactual_costs = probe_counterfactual_costs
+        self.cost_mode = cost_mode
+        self.cost_dense_prox_tau = float(cost_dense_prox_tau)
 
     @property
     def action_size(self) -> int:
@@ -258,13 +272,17 @@ class SafeLearningGoToGoalAdapter:
         action = jnp.zeros((*obs.shape[:-1], self.action_size), dtype=jnp.float32)
         reward = jnp.asarray(state.reward, dtype=jnp.float32)
         discount = jnp.ones_like(reward, dtype=jnp.float32)
-        cost = _cost_from_info(state.info)
-        safety_components = self._safety_components(state, cost)
+        sparse_cost = _cost_from_info(state.info)
+        cost, dense_cost, safety_components = self._cost_target_and_safety(
+            state, sparse_cost
+        )
         extras = self._extras(
             state_info=state.info,
             state_obs=obs,
             next_obs=obs,
             cost=cost,
+            sparse_cost=sparse_cost,
+            dense_cost=dense_cost,
             safety_components=safety_components,
             desired_goal=(
                 self.desired_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
@@ -285,20 +303,28 @@ class SafeLearningGoToGoalAdapter:
         next_obs = self._state_observation(next_state)
         reward = jnp.asarray(next_state.reward, dtype=jnp.float32)
         discount = 1.0 - jnp.asarray(next_state.done, dtype=jnp.float32)
-        cost = _cost_from_info(next_state.info)
-        safety_components = self._safety_components(next_state, cost)
+        sparse_cost = _cost_from_info(next_state.info)
+        cost, dense_cost, safety_components = self._cost_target_and_safety(
+            next_state, sparse_cost
+        )
         cost_zero_action = None
         cost_neg_action = None
         if self.probe_counterfactual_costs:
             zero_next_state = self.env.step(state, jnp.zeros_like(action))
             neg_next_state = self.env.step(state, -action)
-            cost_zero_action = _cost_from_info(zero_next_state.info)
-            cost_neg_action = _cost_from_info(neg_next_state.info)
+            cost_zero_action, _, _ = self._cost_target_and_safety(
+                zero_next_state, _cost_from_info(zero_next_state.info)
+            )
+            cost_neg_action, _, _ = self._cost_target_and_safety(
+                neg_next_state, _cost_from_info(neg_next_state.info)
+            )
         extras = self._extras(
             state_info=next_state.info,
             state_obs=obs,
             next_obs=next_obs,
             cost=cost,
+            sparse_cost=sparse_cost,
+            dense_cost=dense_cost,
             safety_components=safety_components,
             cost_zero_action=cost_zero_action,
             cost_neg_action=cost_neg_action,
@@ -315,6 +341,40 @@ class SafeLearningGoToGoalAdapter:
             ),
         )
         return Transition(obs, action, reward, discount, extras)
+
+    def _cost_target_and_safety(
+        self, state: Any, sparse_cost: jax.Array
+    ) -> tuple[jax.Array, jax.Array, dict[str, jax.Array]]:
+        safety_components = self._safety_components(state, sparse_cost)
+        dense_cost = self._dense_proximity_cost(sparse_cost, safety_components)
+        if self.cost_mode == _COST_MODE_DENSE_PROXIMITY:
+            cost = dense_cost
+        else:
+            cost = jnp.asarray(sparse_cost, dtype=jnp.float32)
+        return (
+            cost.astype(jnp.float32),
+            dense_cost.astype(jnp.float32),
+            safety_components,
+        )
+
+    def _dense_proximity_cost(
+        self, sparse_cost: jax.Array, safety_components: Mapping[str, jax.Array]
+    ) -> jax.Array:
+        sparse_cost = jnp.asarray(sparse_cost, dtype=jnp.float32)
+        min_hazard_dist = jnp.asarray(
+            safety_components.get(
+                "min_hazard_dist",
+                jnp.full_like(sparse_cost, -1.0, dtype=jnp.float32),
+            ),
+            dtype=jnp.float32,
+        )
+        tau = jnp.maximum(
+            jnp.asarray(self.cost_dense_prox_tau, dtype=jnp.float32),
+            jnp.asarray(1.0e-6, dtype=jnp.float32),
+        )
+        available = jnp.isfinite(min_hazard_dist) & (min_hazard_dist >= 0.0)
+        dense = jnp.exp(-jnp.maximum(min_hazard_dist, 0.0) / tau)
+        return jnp.where(available, dense, sparse_cost).astype(jnp.float32)
 
     def _safety_components(self, state: Any, cost: jax.Array) -> dict[str, jax.Array]:
         """Returns interpretable safety diagnostics for safe-learning GoToGoal."""
@@ -545,6 +605,8 @@ class SafeLearningGoToGoalAdapter:
         state_obs: jax.Array,
         next_obs: jax.Array,
         cost: jax.Array,
+        sparse_cost: jax.Array | None = None,
+        dense_cost: jax.Array | None = None,
         safety_components: Mapping[str, jax.Array] | None = None,
         cost_zero_action: jax.Array | None = None,
         cost_neg_action: jax.Array | None = None,
@@ -552,7 +614,11 @@ class SafeLearningGoToGoalAdapter:
         achieved_goal: jax.Array | None = None,
         next_achieved_goal: jax.Array | None = None,
     ) -> dict[str, Any]:
+        sparse_cost = cost if sparse_cost is None else sparse_cost
+        dense_cost = cost if dense_cost is None else dense_cost
         zeros = jnp.zeros_like(cost, dtype=jnp.float32)
+        sparse_cost = jnp.asarray(sparse_cost, dtype=jnp.float32)
+        dense_cost = jnp.asarray(dense_cost, dtype=jnp.float32)
         truncation = _info_array(state_info, "truncation", zeros).astype(jnp.float32)
         seed = _info_array(state_info, "seed", _info_array(state_info, "rng", zeros))
         goal_dist = _info_array(state_info, "last_goal_dist", zeros).astype(
@@ -618,6 +684,8 @@ class SafeLearningGoToGoalAdapter:
             "state": state_obs,
             "next_state": next_obs,
             "cost": cost,
+            "sparse_cost": sparse_cost,
+            "dense_cost": dense_cost,
             "hazard_violation": hazard_violation,
             "robot_vase_contact": robot_vase_contact,
             "point_vase_contact": point_vase_contact,
@@ -636,7 +704,7 @@ class SafeLearningGoToGoalAdapter:
             "goal_dist": goal_dist,
             "goal_reached": goal_reached,
             "d_wall": d_wall,
-            "hard_violation": (cost > 0.0).astype(jnp.float32),
+            "hard_violation": (sparse_cost > 0.0).astype(jnp.float32),
             "state_extras": {
                 "seed": seed,
                 "truncation": truncation,
@@ -664,6 +732,8 @@ def make_safe_learning_go_to_goal(
     goal_mode: str = _OBS_SLICE_GOAL_MODE,
     mask_native_goal_lidar: bool = False,
     probe_counterfactual_costs: bool = False,
+    cost_mode: str = _COST_MODE_SPARSE,
+    cost_dense_prox_tau: float = 0.5,
     **env_kwargs: Any,
 ) -> SafeLearningGoToGoalAdapter:
     """Creates the vectorized safe-learning GoToGoal adapter."""
@@ -674,5 +744,7 @@ def make_safe_learning_go_to_goal(
         goal_mode=goal_mode,
         mask_native_goal_lidar=mask_native_goal_lidar,
         probe_counterfactual_costs=probe_counterfactual_costs,
+        cost_mode=cost_mode,
+        cost_dense_prox_tau=cost_dense_prox_tau,
         **env_kwargs,
     )

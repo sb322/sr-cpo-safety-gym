@@ -19,9 +19,12 @@ def test_parse_log_uses_last_hard_violation_line(tmp_path: Path) -> None:
                 "PID_KP=0.0",
                 "PID_KI=0.0",
                 "COST_RETURN_LOSS_WEIGHT=0.0",
+                "COST_MODE=dense_proximity",
+                "COST_DENSE_PROX_TAU=0.5",
                 "hard_viol=0.1 cost=0.2 hazard=0.3 gdist=4.0 reached=0.0",
                 (
-                    "hard_viol=0.03 cost=0.04 hazard=0.02 "
+                    "hard_viol=0.03 cost=0.04 dense_cost_mean=0.12 "
+                    "dense_cost_std=0.03 c_target=0.12 hazard=0.02 "
                     "vase_contact=0.001 vase_body=0.0000 vase_qpos=0.0000 "
                     "vase_disp=0.0000 cost_resid=0.019 rew=0.02 "
                     "gdist=1.2 g_p10=0.4 g_p50=0.9 g_p90=2.5 "
@@ -136,7 +139,12 @@ def test_parse_log_uses_last_hard_violation_line(tmp_path: Path) -> None:
     assert row["label"] == "pid_off_200_seed0"
     assert row["epochs"] == "200"
     assert row["seed"] == "0"
+    assert row["cost_mode"] == "dense_proximity"
+    assert row["cost_dense_prox_tau"] == "0.5"
     assert row["hard_viol"] == "0.03"
+    assert row["dense_cost_mean"] == "0.12"
+    assert row["dense_cost_std"] == "0.03"
+    assert row["cost_target"] == "0.12"
     assert row["gdist"] == "1.2"
     assert row["g_p50"] == "0.9"
     assert row["g_lt1"] == "0.6"
@@ -243,6 +251,8 @@ def test_main_writes_csv(tmp_path: Path, capsys) -> None:
                 "PID_KP=5.0",
                 "PID_KI=0.01",
                 "COST_RETURN_LOSS_WEIGHT=1.0",
+                "COST_MODE=sparse",
+                "COST_DENSE_PROX_TAU=0.5",
                 "hard_viol=0.04 cost=0.05 hazard=0.03 gdist=1.5 reached=0.01",
             ]
         )
@@ -263,6 +273,8 @@ def test_main_writes_csv(tmp_path: Path, capsys) -> None:
     assert row["pid_kp"] == "5.0"
     assert row["pid_ki"] == "0.01"
     assert row["cost_return_loss_weight"] == "1.0"
+    assert row["cost_mode"] == "sparse"
+    assert row["cost_dense_prox_tau"] == "0.5"
     assert row["hard_viol"] == "0.04"
     assert row["cost"] == "0.05"
     assert row["hazard"] == "0.03"

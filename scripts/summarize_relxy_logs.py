@@ -20,10 +20,14 @@ HEADER_KEYS = (
     "PID_KP",
     "PID_KI",
     "COST_RETURN_LOSS_WEIGHT",
+    "COST_MODE",
+    "COST_DENSE_PROX_TAU",
 )
 METRIC_KEYS = (
     "hard_viol",
     "cost",
+    "dense_cost_mean",
+    "dense_cost_std",
     "hazard",
     "vase_contact",
     "vase_body",
@@ -159,8 +163,13 @@ FIELDNAMES = (
     "pid_kp",
     "pid_ki",
     "cost_return_loss_weight",
+    "cost_mode",
+    "cost_dense_prox_tau",
     "hard_viol",
     "cost",
+    "dense_cost_mean",
+    "dense_cost_std",
+    "cost_target",
     "hazard",
     "vase_contact",
     "vase_body",
@@ -239,15 +248,12 @@ def parse_log(path: Path) -> dict[str, str]:
             parsed = _parse_assignments(line)
             if parsed:
                 last_metrics = parsed
-        elif "action_rank[" in line:
-            parsed = _parse_assignments(line)
-            if parsed:
-                last_metrics.update(parsed)
-        elif "cost_replay[" in line:
-            parsed = _parse_assignments(line)
-            if parsed:
-                last_metrics.update(parsed)
-        elif "counterfactual[" in line or "counterfactual_H" in line:
+        elif (
+            "action_rank[" in line
+            or "cost_replay[" in line
+            or "counterfactual[" in line
+            or "counterfactual_H" in line
+        ):
             parsed = _parse_assignments(line)
             if parsed:
                 last_metrics.update(parsed)
@@ -275,6 +281,8 @@ def parse_log(path: Path) -> dict[str, str]:
         "pid_kp": header.get("PID_KP", ""),
         "pid_ki": header.get("PID_KI", ""),
         "cost_return_loss_weight": header.get("COST_RETURN_LOSS_WEIGHT", ""),
+        "cost_mode": header.get("COST_MODE", ""),
+        "cost_dense_prox_tau": header.get("COST_DENSE_PROX_TAU", ""),
         "lambda_tilde": last_metrics.get("λ̃", ""),
         "qc": last_metrics.get("Qc", ""),
         "lambda_qc_a": last_metrics.get("λQc_a", ""),
@@ -341,6 +349,7 @@ def parse_log(path: Path) -> dict[str, str]:
         "cost_uniform_batch_mean_cost": last_metrics.get(
             "cost_uniform_batch_mean_cost", ""
         ),
+        "cost_target": last_metrics.get("c_target", ""),
     }
     for key in METRIC_KEYS:
         if key in ("λ̃", "Qc", "λQc_a"):
