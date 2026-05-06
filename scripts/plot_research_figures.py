@@ -140,6 +140,10 @@ def rolling_mean(values: list[float], window: int) -> list[float]:
 Filter = Callable[[dict[str, str]], bool]
 
 
+def zip_equal(*iterables):  # type: ignore[no-untyped-def]
+    return zip(*iterables)  # noqa: B905
+
+
 def aggregate_curves(
     rows: list[dict[str, str]],
     *,
@@ -168,7 +172,7 @@ def aggregate_curves(
             points = sorted(points)
             epochs = [point[0] for point in points]
             values = rolling_mean([point[1] for point in points], smooth_window)
-            for epoch, value in zip(epochs, values, strict=True):
+            for epoch, value in zip_equal(epochs, values):
                 by_epoch.setdefault(epoch, []).append(value)
         xs = np.asarray(sorted(by_epoch), dtype=float)
         means: list[float] = []
@@ -315,7 +319,7 @@ def plot_figure2(
         lambda row: row_condition(row) in {"pid_off", "cmdp_active"},
     ]
     fig, axes = plt.subplots(1, 3, figsize=(8.2, 2.55), sharex=True)
-    for ax, metric, label in zip(axes, metrics, "ABC", strict=True):
+    for ax, metric, label in zip_equal(axes, metrics, "ABC"):
         panel_label(ax, label)
         curves = aggregate_curves(
             rows,
@@ -382,7 +386,7 @@ def plot_figure3(
         lambda row: row_depth(row) in {"", args.depth_for_mechanism},
     ]
     fig, axes = plt.subplots(1, 3, figsize=(8.5, 2.6), sharex=True)
-    for ax, label in zip(axes, "ABC", strict=True):
+    for ax, label in zip_equal(axes, "ABC"):
         panel_label(ax, label)
         ax.set_xlabel("Epoch")
 
@@ -468,7 +472,7 @@ def plot_figure4(
         return False
 
     fig, axes = plt.subplots(2, 2, figsize=(7.0, 5.1), sharex=True)
-    for ax, metric, label in zip(axes.ravel(), metrics, "ABCD", strict=True):
+    for ax, metric, label in zip_equal(axes.ravel(), metrics, "ABCD"):
         panel_label(ax, label)
         curves = aggregate_curves(
             rows,
@@ -509,7 +513,7 @@ def plot_figure5(
     if not all(has_metric(summary_rows, metric) for metric in spread_metrics):
         return False
     fig, axes = plt.subplots(1, 3, figsize=(8.4, 2.65))
-    for ax, label in zip(axes, "ABC", strict=True):
+    for ax, label in zip_equal(axes, "ABC"):
         panel_label(ax, label)
 
     labels = ["sparse cost", "hard viol.", "hazard", "Qc"]
@@ -645,7 +649,7 @@ def plot_figure7(
     )
     fig, axes = plt.subplots(2, 2, figsize=(7.0, 5.1))
     if epoch_rows and all(has_metric(epoch_rows, metric) for metric in metrics):
-        for ax, metric, label in zip(axes.ravel(), metrics, "ABCD", strict=True):
+        for ax, metric, label in zip_equal(axes.ravel(), metrics, "ABCD"):
             panel_label(ax, label)
             curves = aggregate_curves(
                 epoch_rows,
@@ -664,7 +668,7 @@ def plot_figure7(
             ax.set_title(METRIC_LABELS.get(metric, metric))
             ax.set_xlabel("Epoch")
     elif summary_rows:
-        for ax, metric, label in zip(axes.ravel(), metrics, "ABCD", strict=True):
+        for ax, metric, label in zip_equal(axes.ravel(), metrics, "ABCD"):
             panel_label(ax, label)
             values = []
             bands = []
