@@ -300,6 +300,43 @@ def test_actor_loss_supports_reference_l2_scores() -> None:
     assert bool(jnp.isfinite(probes["qc_actor_std"]))
 
 
+def test_actor_risk_diagnostics_use_sparse_cost_mask() -> None:
+    (
+        actor_params,
+        critic_params,
+        cost_critic_params,
+        transition,
+        actor,
+        sa_encoder,
+        g_encoder,
+        cost_critic,
+    ) = _actor_setup()
+    transition = transition.replace(
+        extras={
+            **transition.extras,
+            "cost": jnp.ones_like(transition.extras["cost"]) * 0.5,
+            "sparse_cost": jnp.zeros_like(transition.extras["cost"]),
+            "hard_violation": jnp.zeros_like(transition.extras["cost"]),
+        }
+    )
+
+    _, probes = actor_loss_fn(
+        actor_params,
+        critic_params,
+        cost_critic_params,
+        transition,
+        jax.random.PRNGKey(9),
+        actor=actor,
+        sa_encoder=sa_encoder,
+        g_encoder=g_encoder,
+        cost_critic=cost_critic,
+        log_alpha=jnp.array(0.0, dtype=jnp.float32),
+        lambda_tilde=jnp.array(0.0, dtype=jnp.float32),
+    )
+
+    assert float(probes["risk_condition_fraction"]) == 0.0
+
+
 def test_actor_loss_forward_and_grad_finite_with_zero_row_inputs() -> None:
     (
         actor_params,

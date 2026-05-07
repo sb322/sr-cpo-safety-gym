@@ -279,8 +279,10 @@ def actor_loss_fn(
     hard_violation = jnp.asarray(
         extras.get("hard_violation", reference), dtype=jnp.float32
     )
-    cost_sample = jnp.asarray(extras.get("cost", reference), dtype=jnp.float32)
-    risk_mask = jnp.logical_or(hard_violation > 0.5, cost_sample > 0.0)
+    sparse_cost_sample = jnp.asarray(
+        extras.get("sparse_cost", extras.get("cost", reference)), dtype=jnp.float32
+    )
+    risk_mask = jnp.logical_or(hard_violation > 0.5, sparse_cost_sample > 0.0)
     risk_weight = risk_mask.astype(jnp.float32)
     risk_denom = jnp.maximum(jnp.sum(risk_weight), 1.0)
 
