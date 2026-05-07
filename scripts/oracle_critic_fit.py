@@ -433,7 +433,7 @@ def _fit_oracle_critic(
 def _float_dict(values: dict[str, Any]) -> dict[str, float | str | int]:
     out: dict[str, float | str | int] = {}
     for key, value in values.items():
-        if isinstance(value, str | int):
+        if isinstance(value, (str, int)):
             out[key] = value
         else:
             out[key] = float(jnp.asarray(value))
