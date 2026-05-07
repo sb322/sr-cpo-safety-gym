@@ -52,7 +52,10 @@ class OracleFitConfig:
     fit_labels: str = "dense"
     fit_label_transforms: str = "absolute"
     fit_losses: str = "mse"
+    fit_goal_modes: str = "normal"
     fit_rank_eps: float = 1e-6
+    fit_bootstrap_samples: int = 200
+    action_effect_eps: float = 1e-6
     include_synthetic_action_norm: bool = True
     output_csv: str = "figures/data/oracle_critic_fit.csv"
     width: int = 256
@@ -162,6 +165,18 @@ def _spearman_by_state(pred: Array, label: Array) -> Array:
         + 1e-12
     )
     return numer / denom
+
+
+def _bootstrap_mean_interval(
+    values: Array, key: Array, num_samples: int
+) -> tuple[Array, Array]:
+    values = jnp.asarray(values, dtype=jnp.float32)
+    if num_samples <= 0:
+        mean = jnp.mean(values)
+        return mean, mean
+    idx = jax.random.randint(key, (num_samples, values.shape[0]), 0, values.shape[0])
+    boot_means = jnp.mean(values[idx], axis=1)
+    return jnp.quantile(boot_means, 0.025), jnp.quantile(boot_means, 0.975)
 
 
 def _candidate_actions(
@@ -316,6 +331,12 @@ def _oracle_rollout_labels(
     flat_state = _repeat_env_state(env_state, num_candidates, num_states)
     flat_actions = jnp.reshape(candidate_actions, (num_states * num_candidates, action_dim))
     next_state, transition = env_adapter.step(flat_state, flat_actions)
+    next_obs_by_action = jnp.reshape(
+        env_adapter._state_observation(next_state),
+        (num_states, num_candidates, -1),
+    )
+    next_obs_delta = next_obs_by_action - next_obs_by_action[:, :1, :]
+    next_obs_spread = jnp.max(jnp.linalg.norm(next_obs_delta, axis=-1), axis=1)
     dense_step = _reshape_candidate(
         transition.extras["dense_cost"], num_states, num_candidates
     )
@@ -366,7 +387,19 @@ def _oracle_rollout_labels(
         "dense_returns": dense_returns,
         "sparse_returns": sparse_returns,
         "min_hazard_dist_h1": min_hazard_dist,
+        "next_obs_action_spread": next_obs_spread,
         "synthetic_action_norm": synthetic_action_norm,
+    }
+
+
+def _action_effect_sanity(spread: Array, eps: float) -> dict[str, Array]:
+    spread = jnp.asarray(spread, dtype=jnp.float32)
+    return {
+        "next_obs_action_spread_mean": jnp.mean(spread),
+        "next_obs_action_spread_min": jnp.min(spread),
+        "next_obs_action_spread_p10": jnp.quantile(spread, 0.10),
+        "next_obs_action_spread_p50": jnp.quantile(spread, 0.50),
+        "next_obs_action_spread_frac_gt_eps": jnp.mean((spread > eps).astype(jnp.float32)),
     }
 
 
@@ -409,10 +442,18 @@ def _fit_oracle_critic(
     labels: Array,
     actor_actions: Array,
     fit_loss: str,
+    fit_goal_mode: str,
     key: Array,
 ) -> dict[str, Array]:
     num_states, num_candidates, action_dim = actions.shape
-    perm = jax.random.permutation(key, num_states)
+    perm_key, goal_key, init_key, train_key, boot_key = jax.random.split(key, 5)
+    perm = jax.random.permutation(perm_key, num_states)
+    if fit_goal_mode == "normal":
+        fit_goals = goals
+    elif fit_goal_mode == "shuffled":
+        fit_goals = goals[jax.random.permutation(goal_key, num_states)]
+    else:
+        raise ValueError("fit_goal_mode must be normal or shuffled")
     val_count = max(1, int(num_states * config.fit_val_fraction))
     val_idx = perm[:val_count]
     train_idx = perm[val_count:]
@@ -420,16 +461,16 @@ def _fit_oracle_critic(
         raise ValueError("fit_val_fraction leaves no training states")
 
     train_states = _repeat_by_candidate(states, train_idx, num_candidates)
-    train_goals = _repeat_by_candidate(goals, train_idx, num_candidates)
+    train_goals = _repeat_by_candidate(fit_goals, train_idx, num_candidates)
     train_actions = _flatten_by_state(actions, train_idx)
     train_labels = jnp.ravel(labels[train_idx])
     train_state_states = states[train_idx]
-    train_state_goals = goals[train_idx]
+    train_state_goals = fit_goals[train_idx]
     train_state_actions = actions[train_idx]
     train_state_labels = labels[train_idx]
 
     val_states = states[val_idx]
-    val_goals = goals[val_idx]
+    val_goals = fit_goals[val_idx]
     val_actions = actions[val_idx]
     val_labels = labels[val_idx]
     val_actor_actions = actor_actions[val_idx]
@@ -439,7 +480,6 @@ def _fit_oracle_critic(
         num_blocks=config.num_blocks,
         use_residual=config.use_residual,
     )
-    init_key, train_key = jax.random.split(key)
     params = critic.init(
         init_key,
         train_states[:1],
@@ -516,8 +556,16 @@ def _fit_oracle_critic(
     state_mean_mse = jnp.mean(jnp.square(state_mean - val_labels))
     global_mean_mse = jnp.mean(jnp.square(jnp.mean(train_labels) - val_labels))
     spearman = _spearman_by_state(pred, val_labels)
-    top1 = jnp.mean(
-        (jnp.argmin(pred, axis=1) == jnp.argmin(val_labels, axis=1)).astype(jnp.float32)
+    top1_by_state = (
+        jnp.argmin(pred, axis=1) == jnp.argmin(val_labels, axis=1)
+    ).astype(jnp.float32)
+    top1 = jnp.mean(top1_by_state)
+    spear_key, top1_key = jax.random.split(boot_key)
+    spearman_ci_low, spearman_ci_high = _bootstrap_mean_interval(
+        spearman, spear_key, config.fit_bootstrap_samples
+    )
+    top1_ci_low, top1_ci_high = _bootstrap_mean_interval(
+        top1_by_state, top1_key, config.fit_bootstrap_samples
     )
 
     def q_sum(action: Array) -> Array:
@@ -532,7 +580,11 @@ def _fit_oracle_critic(
         "fit_global_mean_mse": global_mean_mse,
         "fit_mse_over_state_mean": mse / (state_mean_mse + 1e-12),
         "fit_within_spearman": jnp.mean(spearman),
+        "fit_within_spearman_ci_low": spearman_ci_low,
+        "fit_within_spearman_ci_high": spearman_ci_high,
         "fit_top1_match": top1,
+        "fit_top1_match_ci_low": top1_ci_low,
+        "fit_top1_match_ci_high": top1_ci_high,
         "fit_random_top1": jnp.asarray(1.0 / num_candidates, dtype=jnp.float32),
         "fit_actor_action_grad_norm": grad_norm,
         "fit_val_states": jnp.asarray(val_idx.size, dtype=jnp.float32),
@@ -577,6 +629,9 @@ def main() -> int:
     )
     fit_losses = _parse_csv_values(
         config.fit_losses, allowed={"mse", "rank"}, name="fit loss"
+    )
+    fit_goal_modes = _parse_csv_values(
+        config.fit_goal_modes, allowed={"normal", "shuffled"}, name="fit goal mode"
     )
     train_config = _make_train_config(config)
     key = jax.random.PRNGKey(config.seed)
@@ -637,6 +692,21 @@ def main() -> int:
     if config.include_synthetic_action_norm:
         label_mats[("synthetic_action_norm", 0)] = dataset["synthetic_action_norm"]
 
+    sanity_row = {
+        **base,
+        "kind": "sanity",
+        "label": "next_obs_action_effect",
+        "horizon": 1,
+    }
+    sanity_row.update(
+        _float_dict(
+            _action_effect_sanity(
+                dataset["next_obs_action_spread"], config.action_effect_eps
+            )
+        )
+    )
+    rows.append(sanity_row)
+
     for (label_name, horizon), labels in label_mats.items():
         row = {
             **base,
@@ -655,14 +725,51 @@ def main() -> int:
                 for transform in fit_label_transforms:
                     labels = _transform_labels(raw_labels, transform)
                     for fit_loss in fit_losses:
-                        fit_key_base, label_key = jax.random.split(fit_key_base)
+                        for fit_goal_mode in fit_goal_modes:
+                            fit_key_base, label_key = jax.random.split(fit_key_base)
+                            row = {
+                                **base,
+                                "kind": "fit",
+                                "label": label_name,
+                                "label_transform": transform,
+                                "fit_loss": fit_loss,
+                                "fit_goal_mode": fit_goal_mode,
+                                "horizon": horizon,
+                                "fit_steps": config.fit_steps,
+                                "fit_batch_size": config.fit_batch_size,
+                                "fit_learning_rate": config.fit_learning_rate,
+                            }
+                            row.update(
+                                _float_dict(
+                                    _fit_oracle_critic(
+                                        config=config,
+                                        states=dataset["obs"],
+                                        goals=dataset["goal"],
+                                        actions=dataset["actions"],
+                                        labels=labels,
+                                        actor_actions=dataset["actor_action"],
+                                        fit_loss=fit_loss,
+                                        fit_goal_mode=fit_goal_mode,
+                                        key=label_key,
+                                    )
+                                )
+                            )
+                            rows.append(row)
+        if config.include_synthetic_action_norm:
+            raw_labels = label_mats[("synthetic_action_norm", 0)]
+            for transform in fit_label_transforms:
+                labels = _transform_labels(raw_labels, transform)
+                for fit_loss in fit_losses:
+                    for fit_goal_mode in fit_goal_modes:
+                        fit_key_base, synth_key = jax.random.split(fit_key_base)
                         row = {
                             **base,
                             "kind": "fit",
-                            "label": label_name,
+                            "label": "synthetic_action_norm",
                             "label_transform": transform,
                             "fit_loss": fit_loss,
-                            "horizon": horizon,
+                            "fit_goal_mode": fit_goal_mode,
+                            "horizon": 0,
                             "fit_steps": config.fit_steps,
                             "fit_batch_size": config.fit_batch_size,
                             "fit_learning_rate": config.fit_learning_rate,
@@ -677,43 +784,12 @@ def main() -> int:
                                     labels=labels,
                                     actor_actions=dataset["actor_action"],
                                     fit_loss=fit_loss,
-                                    key=label_key,
+                                    fit_goal_mode=fit_goal_mode,
+                                    key=synth_key,
                                 )
                             )
                         )
                         rows.append(row)
-        if config.include_synthetic_action_norm:
-            raw_labels = label_mats[("synthetic_action_norm", 0)]
-            for transform in fit_label_transforms:
-                labels = _transform_labels(raw_labels, transform)
-                for fit_loss in fit_losses:
-                    fit_key_base, synth_key = jax.random.split(fit_key_base)
-                    row = {
-                        **base,
-                        "kind": "fit",
-                        "label": "synthetic_action_norm",
-                        "label_transform": transform,
-                        "fit_loss": fit_loss,
-                        "horizon": 0,
-                        "fit_steps": config.fit_steps,
-                        "fit_batch_size": config.fit_batch_size,
-                        "fit_learning_rate": config.fit_learning_rate,
-                    }
-                    row.update(
-                        _float_dict(
-                            _fit_oracle_critic(
-                                config=config,
-                                states=dataset["obs"],
-                                goals=dataset["goal"],
-                                actions=dataset["actions"],
-                                labels=labels,
-                                actor_actions=dataset["actor_action"],
-                                fit_loss=fit_loss,
-                                key=synth_key,
-                            )
-                        )
-                    )
-                    rows.append(row)
 
     rows = [_float_dict(row) for row in rows]
     output = Path(config.output_csv)
@@ -730,15 +806,29 @@ def main() -> int:
                 f"spread/mag={float(row['spread_magnitude_ratio']):.3e}",
                 f"mean_spread={float(row['mean_action_spread']):.3e}",
             )
+        elif row["kind"] == "sanity":
+            print(
+                "sanity",
+                f"label={row['label']}",
+                f"mean_next_obs_spread="
+                f"{float(row['next_obs_action_spread_mean']):.3e}",
+                f"frac_gt_eps="
+                f"{float(row['next_obs_action_spread_frac_gt_eps']):.3f}",
+            )
         else:
             print(
                 "fit",
                 f"label={row['label']}",
                 f"transform={row.get('label_transform', 'absolute')}",
                 f"loss={row.get('fit_loss', 'mse')}",
+                f"goal_mode={row.get('fit_goal_mode', 'normal')}",
                 f"H={row['horizon']}",
                 f"spearman={float(row['fit_within_spearman']):.3f}",
+                f"spear_ci=[{float(row['fit_within_spearman_ci_low']):.3f},"
+                f"{float(row['fit_within_spearman_ci_high']):.3f}]",
                 f"top1={float(row['fit_top1_match']):.3f}",
+                f"top1_ci=[{float(row['fit_top1_match_ci_low']):.3f},"
+                f"{float(row['fit_top1_match_ci_high']):.3f}]",
                 f"mse/state={float(row['fit_mse_over_state_mean']):.3f}",
                 f"grad={float(row['fit_actor_action_grad_norm']):.3e}",
             )
