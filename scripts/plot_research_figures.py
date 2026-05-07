@@ -44,7 +44,10 @@ METRIC_LABELS = {
     "actor_qc_percentile": "Actor Qc percentile",
     "best_qc_action_is_actor_frac": "Actor is best-Qc action",
     "cost_risky_batch_frac": "Risky batch fraction",
-    "true_action_cost_spread": "Sparse cost spread",
+    "true_action_cost_spread": "Active cost spread",
+    "true_action_active_cost_spread": "Active cost spread",
+    "true_action_sparse_cost_spread": "Sparse cost spread",
+    "true_action_dense_cost_spread": "Dense cost spread",
     "true_action_hard_viol_spread": "Hard-viol. spread",
     "true_action_hazard_spread": "Hazard spread",
     "q_c_action_spread": "Qc action spread",
@@ -505,7 +508,9 @@ def plot_figure5(
     summary_rows: list[dict[str, str]], out_dir: Path, args: argparse.Namespace
 ) -> bool:
     spread_metrics = (
-        "true_action_cost_spread",
+        "true_action_active_cost_spread",
+        "true_action_sparse_cost_spread",
+        "true_action_dense_cost_spread",
         "true_action_hard_viol_spread",
         "true_action_hazard_spread",
         "q_c_action_spread",
@@ -516,8 +521,8 @@ def plot_figure5(
     for ax, label in zip_equal(axes, "ABC"):
         panel_label(ax, label)
 
-    labels = ["sparse cost", "hard viol.", "hazard", "Qc"]
-    colors = ["#6B7280", "#9CA3AF", "#59A14F", "#D55E00"]
+    labels = ["active cost", "sparse cost", "dense cost", "hard viol.", "hazard", "Qc"]
+    colors = ["#4E79A7", "#6B7280", "#0072B2", "#9CA3AF", "#59A14F", "#D55E00"]
     means: list[float] = []
     bands: list[float] = []
     for metric in spread_metrics:
@@ -528,7 +533,7 @@ def plot_figure5(
     axes[0].bar(x, means, yerr=bands, color=colors, width=0.62, capsize=2)
     axes[0].set_yscale("log")
     axes[0].set_xticks(x, labels, rotation=25, ha="right")
-    axes[0].set_title("True sparse labels are flat")
+    axes[0].set_title("True labels are flat")
     axes[0].set_ylabel("Action spread")
 
     corr_metrics = ("corr_qc_true_cost", "corr_qc_true_hazard")

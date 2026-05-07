@@ -84,6 +84,9 @@ EVAL_METRIC_KEYS = (
 MULTISTEP_COUNTERFACTUAL_HORIZONS = (5, 10, 20)
 MULTISTEP_COUNTERFACTUAL_BASE_KEYS = (
     "true_cost_spread",
+    "true_active_cost_spread",
+    "true_sparse_cost_spread",
+    "true_dense_cost_spread",
     "true_hard_viol_spread",
     "true_hazard_spread",
     "frac_nonzero_cost_spread",
@@ -123,6 +126,9 @@ MULTISTEP_COUNTERFACTUAL_METRIC_KEYS = tuple(
 )
 COUNTERFACTUAL_METRIC_KEYS = (
     "true_action_cost_spread",
+    "true_action_active_cost_spread",
+    "true_action_sparse_cost_spread",
+    "true_action_dense_cost_spread",
     "true_action_hard_viol_spread",
     "true_action_hazard_spread",
     "qc_action_spread",

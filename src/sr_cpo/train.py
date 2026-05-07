@@ -508,9 +508,13 @@ def _counterfactual_candidate_summary(
     prefix: str,
     qcs: Array,
     true_cost: Array,
+    true_sparse_cost: Array | None = None,
+    true_dense_cost: Array | None = None,
     hard_violation: Array,
     hazard_violation: Array,
     current_cost: Array,
+    current_sparse_cost: Array | None = None,
+    current_dense_cost: Array | None = None,
     current_hard_violation: Array,
     current_min_hazard_dist: Array,
 ) -> dict[str, Array]:
@@ -518,13 +522,27 @@ def _counterfactual_candidate_summary(
 
     qcs = jnp.asarray(qcs, dtype=jnp.float32)
     true_cost = jnp.asarray(true_cost, dtype=jnp.float32)
+    true_sparse_cost = true_cost if true_sparse_cost is None else true_sparse_cost
+    true_dense_cost = true_cost if true_dense_cost is None else true_dense_cost
+    true_sparse_cost = jnp.asarray(true_sparse_cost, dtype=jnp.float32)
+    true_dense_cost = jnp.asarray(true_dense_cost, dtype=jnp.float32)
     hard_violation = jnp.asarray(hard_violation, dtype=jnp.float32)
     hazard_violation = jnp.asarray(hazard_violation, dtype=jnp.float32)
     current_cost = jnp.asarray(current_cost, dtype=jnp.float32)
+    current_sparse_cost = current_cost if current_sparse_cost is None else current_sparse_cost
+    current_dense_cost = current_cost if current_dense_cost is None else current_dense_cost
+    current_sparse_cost = jnp.asarray(current_sparse_cost, dtype=jnp.float32)
+    current_dense_cost = jnp.asarray(current_dense_cost, dtype=jnp.float32)
     current_hard_violation = jnp.asarray(current_hard_violation, dtype=jnp.float32)
     current_min_hazard_dist = jnp.asarray(current_min_hazard_dist, dtype=jnp.float32)
 
     true_cost_spread = jnp.max(true_cost, axis=0) - jnp.min(true_cost, axis=0)
+    true_sparse_cost_spread = (
+        jnp.max(true_sparse_cost, axis=0) - jnp.min(true_sparse_cost, axis=0)
+    )
+    true_dense_cost_spread = (
+        jnp.max(true_dense_cost, axis=0) - jnp.min(true_dense_cost, axis=0)
+    )
     hard_spread = jnp.max(hard_violation, axis=0) - jnp.min(hard_violation, axis=0)
     hazard_spread = (
         jnp.max(hazard_violation, axis=0) - jnp.min(hazard_violation, axis=0)
@@ -548,6 +566,9 @@ def _counterfactual_candidate_summary(
 
     per_state = {
         f"{prefix}true_cost_spread": true_cost_spread,
+        f"{prefix}true_active_cost_spread": true_cost_spread,
+        f"{prefix}true_sparse_cost_spread": true_sparse_cost_spread,
+        f"{prefix}true_dense_cost_spread": true_dense_cost_spread,
         f"{prefix}true_hard_viol_spread": hard_spread,
         f"{prefix}true_hazard_spread": hazard_spread,
         f"{prefix}qc_action_spread": qc_spread,
@@ -587,9 +608,13 @@ def _counterfactual_summary(
     *,
     qcs: Array,
     true_cost: Array,
+    true_sparse_cost: Array | None = None,
+    true_dense_cost: Array | None = None,
     hard_violation: Array,
     hazard_violation: Array,
     current_cost: Array,
+    current_sparse_cost: Array | None = None,
+    current_dense_cost: Array | None = None,
     current_hard_violation: Array,
     current_min_hazard_dist: Array,
 ) -> dict[str, Array]:
@@ -598,14 +623,21 @@ def _counterfactual_summary(
         prefix="one_step_",
         qcs=qcs,
         true_cost=true_cost,
+        true_sparse_cost=true_sparse_cost,
+        true_dense_cost=true_dense_cost,
         hard_violation=hard_violation,
         hazard_violation=hazard_violation,
         current_cost=current_cost,
+        current_sparse_cost=current_sparse_cost,
+        current_dense_cost=current_dense_cost,
         current_hard_violation=current_hard_violation,
         current_min_hazard_dist=current_min_hazard_dist,
     )
     legacy_key_map = {
         "true_action_cost_spread": "one_step_true_cost_spread",
+        "true_action_active_cost_spread": "one_step_true_active_cost_spread",
+        "true_action_sparse_cost_spread": "one_step_true_sparse_cost_spread",
+        "true_action_dense_cost_spread": "one_step_true_dense_cost_spread",
         "true_action_hard_viol_spread": "one_step_true_hard_viol_spread",
         "true_action_hazard_spread": "one_step_true_hazard_spread",
         "qc_action_spread": "one_step_qc_action_spread",
@@ -657,9 +689,13 @@ def _multistep_counterfactual_summary(
     horizon: int,
     qcs: Array,
     cost_return: Array,
+    sparse_cost_return: Array | None = None,
+    dense_cost_return: Array | None = None,
     hard_return: Array,
     hazard_return: Array,
     current_cost: Array,
+    current_sparse_cost: Array | None = None,
+    current_dense_cost: Array | None = None,
     current_hard_violation: Array,
     current_min_hazard_dist: Array,
 ) -> dict[str, Array]:
@@ -667,9 +703,13 @@ def _multistep_counterfactual_summary(
         prefix=f"cf_{horizon}_",
         qcs=qcs,
         true_cost=cost_return,
+        true_sparse_cost=sparse_cost_return,
+        true_dense_cost=dense_cost_return,
         hard_violation=hard_return,
         hazard_violation=hazard_return,
         current_cost=current_cost,
+        current_sparse_cost=current_sparse_cost,
+        current_dense_cost=current_dense_cost,
         current_hard_violation=current_hard_violation,
         current_min_hazard_dist=current_min_hazard_dist,
     )
@@ -785,6 +825,12 @@ def make_policy_evaluator(
                     true_cost = jnp.asarray(
                         extras.get("cost", reference), dtype=jnp.float32
                     )
+                    true_sparse_cost = jnp.asarray(
+                        extras.get("sparse_cost", true_cost), dtype=jnp.float32
+                    )
+                    true_dense_cost = jnp.asarray(
+                        extras.get("dense_cost", true_cost), dtype=jnp.float32
+                    )
                     hard_violation = jnp.asarray(
                         extras.get("hard_violation", (true_cost > 0.0)),
                         dtype=jnp.float32,
@@ -802,6 +848,8 @@ def make_policy_evaluator(
                     )
                     return (
                         true_cost,
+                        true_sparse_cost,
+                        true_dense_cost,
                         hard_violation,
                         hazard_violation,
                         min_hazard_dist,
@@ -809,12 +857,22 @@ def make_policy_evaluator(
 
                 (
                     true_cost,
+                    true_sparse_cost,
+                    true_dense_cost,
                     hard_violation,
                     hazard_violation,
                     _candidate_min_hazard_dist,
                 ) = jax.vmap(probe_step)(candidate_actions)
                 current_cost = jnp.asarray(
                     transition.extras.get("cost", reference), dtype=jnp.float32
+                )
+                current_sparse_cost = jnp.asarray(
+                    transition.extras.get("sparse_cost", current_cost),
+                    dtype=jnp.float32,
+                )
+                current_dense_cost = jnp.asarray(
+                    transition.extras.get("dense_cost", current_cost),
+                    dtype=jnp.float32,
                 )
                 current_hard_violation = jnp.asarray(
                     transition.extras.get(
@@ -832,9 +890,13 @@ def make_policy_evaluator(
                 probe_metrics = _counterfactual_summary(
                     qcs=qcs,
                     true_cost=true_cost,
+                    true_sparse_cost=true_sparse_cost,
+                    true_dense_cost=true_dense_cost,
                     hard_violation=hard_violation,
                     hazard_violation=hazard_violation,
                     current_cost=current_cost,
+                    current_sparse_cost=current_sparse_cost,
+                    current_dense_cost=current_dense_cost,
                     current_hard_violation=current_hard_violation,
                     current_min_hazard_dist=current_min_hazard_dist,
                 )
@@ -845,11 +907,17 @@ def make_policy_evaluator(
                     )
 
                     def extract_step_safety(candidate_transition: Any) -> tuple[
-                        Array, Array, Array, Array
+                        Array, Array, Array, Array, Array, Array
                     ]:
                         extras = candidate_transition.extras
                         true_cost = jnp.asarray(
                             extras.get("cost", reference), dtype=jnp.float32
+                        )
+                        true_sparse_cost = jnp.asarray(
+                            extras.get("sparse_cost", true_cost), dtype=jnp.float32
+                        )
+                        true_dense_cost = jnp.asarray(
+                            extras.get("dense_cost", true_cost), dtype=jnp.float32
                         )
                         hard_violation = jnp.asarray(
                             extras.get("hard_violation", (true_cost > 0.0)),
@@ -870,6 +938,8 @@ def make_policy_evaluator(
                         )
                         return (
                             true_cost,
+                            true_sparse_cost,
+                            true_dense_cost,
                             hard_violation,
                             hazard_violation,
                             min_hazard_dist,
@@ -877,18 +947,24 @@ def make_policy_evaluator(
 
                     def compute_multistep() -> dict[str, Array]:
                         def rollout_candidate(candidate_action: Array) -> tuple[
-                            Array, Array, Array, Array
+                            Array, Array, Array, Array, Array, Array
                         ]:
                             def rollout_step(
-                                carry: tuple[Any, Array, Array, Array, Array],
+                                carry: tuple[
+                                    Any, Array, Array, Array, Array, Array, Array
+                                ],
                                 horizon_index: Array,
                             ) -> tuple[
-                                tuple[Any, Array, Array, Array, Array],
-                                tuple[Array, Array, Array, Array],
+                                tuple[
+                                    Any, Array, Array, Array, Array, Array, Array
+                                ],
+                                tuple[Array, Array, Array, Array, Array, Array],
                             ]:
                                 (
                                     rollout_state,
                                     cost_acc,
+                                    sparse_cost_acc,
+                                    dense_cost_acc,
                                     hard_acc,
                                     hazard_acc,
                                     discount,
@@ -916,6 +992,8 @@ def make_policy_evaluator(
                                 )
                                 (
                                     step_cost,
+                                    step_sparse_cost,
+                                    step_dense_cost,
                                     step_hard,
                                     step_hazard,
                                     step_min_hazard_dist,
@@ -923,11 +1001,15 @@ def make_policy_evaluator(
                                 return (
                                     next_rollout_state,
                                     cost_acc + discount * step_cost,
+                                    sparse_cost_acc + discount * step_sparse_cost,
+                                    dense_cost_acc + discount * step_dense_cost,
                                     hard_acc + discount * step_hard,
                                     hazard_acc + discount * step_hazard,
                                     discount * config.gamma_c,
                                 ), (
                                     cost_acc + discount * step_cost,
+                                    sparse_cost_acc + discount * step_sparse_cost,
+                                    dense_cost_acc + discount * step_dense_cost,
                                     hard_acc + discount * step_hard,
                                     hazard_acc + discount * step_hazard,
                                     step_min_hazard_dist,
@@ -935,6 +1017,8 @@ def make_policy_evaluator(
 
                             init = (
                                 env_state,
+                                jnp.zeros((config.num_envs,), dtype=jnp.float32),
+                                jnp.zeros((config.num_envs,), dtype=jnp.float32),
                                 jnp.zeros((config.num_envs,), dtype=jnp.float32),
                                 jnp.zeros((config.num_envs,), dtype=jnp.float32),
                                 jnp.zeros((config.num_envs,), dtype=jnp.float32),
@@ -947,12 +1031,16 @@ def make_policy_evaluator(
                             )
                             (
                                 cost_history,
+                                sparse_cost_history,
+                                dense_cost_history,
                                 hard_history,
                                 hazard_history,
                                 min_hazard_history,
                             ) = history
                             return (
                                 cost_history,
+                                sparse_cost_history,
+                                dense_cost_history,
                                 hard_history,
                                 hazard_history,
                                 min_hazard_history,
@@ -960,6 +1048,8 @@ def make_policy_evaluator(
 
                         (
                             cost_histories,
+                            sparse_cost_histories,
+                            dense_cost_histories,
                             hard_histories,
                             hazard_histories,
                             min_hazard_histories,
@@ -979,9 +1069,17 @@ def make_policy_evaluator(
                                     horizon=horizon,
                                     qcs=qcs,
                                     cost_return=cost_histories[:, horizon_index],
+                                    sparse_cost_return=sparse_cost_histories[
+                                        :, horizon_index
+                                    ],
+                                    dense_cost_return=dense_cost_histories[
+                                        :, horizon_index
+                                    ],
                                     hard_return=hard_histories[:, horizon_index],
                                     hazard_return=hazard_histories[:, horizon_index],
                                     current_cost=current_cost,
+                                    current_sparse_cost=current_sparse_cost,
+                                    current_dense_cost=current_dense_cost,
                                     current_hard_violation=current_hard_violation,
                                     current_min_hazard_dist=current_min_hazard_dist,
                                 )
@@ -1008,9 +1106,13 @@ def make_policy_evaluator(
                                 horizon=horizon,
                                 qcs=jnp.zeros_like(qcs),
                                 cost_return=jnp.zeros_like(qcs),
+                                sparse_cost_return=jnp.zeros_like(qcs),
+                                dense_cost_return=jnp.zeros_like(qcs),
                                 hard_return=jnp.zeros_like(qcs),
                                 hazard_return=jnp.zeros_like(qcs),
                                 current_cost=current_cost,
+                                current_sparse_cost=current_sparse_cost,
+                                current_dense_cost=current_dense_cost,
                                 current_hard_violation=current_hard_violation,
                                 current_min_hazard_dist=current_min_hazard_dist,
                             )
@@ -1433,12 +1535,22 @@ def _collect_real_trajectory(
     _assert_goal_shape(
         rollout_goals, config.goal_dim, context="real actor rollout metrics"
     )
+    sparse_cost = _transition_sparse_cost(transitions.extras)
+    dense_cost = _transition_dense_cost(transitions.extras)
     if config.probe_counterfactual_costs:
         cost_zero_action = transitions.extras["cost_zero_action"]
         cost_neg_action = transitions.extras["cost_neg_action"]
+        sparse_cost_zero_action = transitions.extras["sparse_cost_zero_action"]
+        sparse_cost_neg_action = transitions.extras["sparse_cost_neg_action"]
+        dense_cost_zero_action = transitions.extras["dense_cost_zero_action"]
+        dense_cost_neg_action = transitions.extras["dense_cost_neg_action"]
     else:
         cost_zero_action = jnp.zeros_like(transitions.extras["cost"])
         cost_neg_action = jnp.zeros_like(transitions.extras["cost"])
+        sparse_cost_zero_action = jnp.zeros_like(sparse_cost)
+        sparse_cost_neg_action = jnp.zeros_like(sparse_cost)
+        dense_cost_zero_action = jnp.zeros_like(dense_cost)
+        dense_cost_neg_action = jnp.zeros_like(dense_cost)
     replay = _insert_vector_trajectories(
         train_state.replay,
         observations=observations,
@@ -1449,8 +1561,6 @@ def _collect_real_trajectory(
         d_wall=transitions.extras["d_wall"],
         hard_violations=transitions.extras["hard_violation"],
     )
-    sparse_cost = _transition_sparse_cost(transitions.extras)
-    dense_cost = _transition_dense_cost(transitions.extras)
     goal_metrics = _goal_distance_metrics(transitions.extras["goal_dist"])
     metrics = {
         "reward": jnp.mean(transitions.reward),
@@ -1518,6 +1628,12 @@ def _collect_real_trajectory(
         "cost_action_minus_zero": jnp.mean(
             transitions.extras["cost"] - cost_zero_action
         ),
+        "sparse_cost_zero_action": jnp.mean(sparse_cost_zero_action),
+        "sparse_cost_neg_action": jnp.mean(sparse_cost_neg_action),
+        "sparse_cost_action_minus_zero": jnp.mean(sparse_cost - sparse_cost_zero_action),
+        "dense_cost_zero_action": jnp.mean(dense_cost_zero_action),
+        "dense_cost_neg_action": jnp.mean(dense_cost_neg_action),
+        "dense_cost_action_minus_zero": jnp.mean(dense_cost - dense_cost_zero_action),
     }
     next_state = train_state.replace(
         key=key,
@@ -2245,8 +2361,12 @@ def _format_counterfactual_probe_line(metrics: Mapping[str, Array]) -> str | Non
         return None
     return (
         "         "
-        f"counterfactual[ true_action_cost_spread="
-        f"{_mean_float(metrics, 'true_action_cost_spread'):.2e} "
+        f"counterfactual[ true_action_active_cost_spread="
+        f"{_mean_float(metrics, 'true_action_active_cost_spread'):.2e} "
+        f"true_action_sparse_cost_spread="
+        f"{_mean_float(metrics, 'true_action_sparse_cost_spread'):.2e} "
+        f"true_action_dense_cost_spread="
+        f"{_mean_float(metrics, 'true_action_dense_cost_spread'):.2e} "
         f"true_action_hard_viol_spread="
         f"{_mean_float(metrics, 'true_action_hard_viol_spread'):.2e} "
         f"true_action_hazard_spread="
@@ -2321,8 +2441,12 @@ def _format_multistep_counterfactual_probe_lines(
         lines.append(
             "         "
             f"counterfactual_H{horizon}[ "
-            f"{prefix}true_cost_spread="
-            f"{_mean_float(metrics, f'{prefix}true_cost_spread'):.2e} "
+            f"{prefix}true_active_cost_spread="
+            f"{_mean_float(metrics, f'{prefix}true_active_cost_spread'):.2e} "
+            f"{prefix}true_sparse_cost_spread="
+            f"{_mean_float(metrics, f'{prefix}true_sparse_cost_spread'):.2e} "
+            f"{prefix}true_dense_cost_spread="
+            f"{_mean_float(metrics, f'{prefix}true_dense_cost_spread'):.2e} "
             f"{prefix}true_hard_viol_spread="
             f"{_mean_float(metrics, f'{prefix}true_hard_viol_spread'):.2e} "
             f"{prefix}true_hazard_spread="

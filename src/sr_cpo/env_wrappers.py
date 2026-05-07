@@ -309,14 +309,20 @@ class SafeLearningGoToGoalAdapter:
         )
         cost_zero_action = None
         cost_neg_action = None
+        sparse_cost_zero_action = None
+        sparse_cost_neg_action = None
+        dense_cost_zero_action = None
+        dense_cost_neg_action = None
         if self.probe_counterfactual_costs:
             zero_next_state = self.env.step(state, jnp.zeros_like(action))
             neg_next_state = self.env.step(state, -action)
-            cost_zero_action, _, _ = self._cost_target_and_safety(
-                zero_next_state, _cost_from_info(zero_next_state.info)
+            sparse_cost_zero_action = _cost_from_info(zero_next_state.info)
+            sparse_cost_neg_action = _cost_from_info(neg_next_state.info)
+            cost_zero_action, dense_cost_zero_action, _ = self._cost_target_and_safety(
+                zero_next_state, sparse_cost_zero_action
             )
-            cost_neg_action, _, _ = self._cost_target_and_safety(
-                neg_next_state, _cost_from_info(neg_next_state.info)
+            cost_neg_action, dense_cost_neg_action, _ = self._cost_target_and_safety(
+                neg_next_state, sparse_cost_neg_action
             )
         extras = self._extras(
             state_info=next_state.info,
@@ -328,6 +334,10 @@ class SafeLearningGoToGoalAdapter:
             safety_components=safety_components,
             cost_zero_action=cost_zero_action,
             cost_neg_action=cost_neg_action,
+            sparse_cost_zero_action=sparse_cost_zero_action,
+            sparse_cost_neg_action=sparse_cost_neg_action,
+            dense_cost_zero_action=dense_cost_zero_action,
+            dense_cost_neg_action=dense_cost_neg_action,
             desired_goal=(
                 self.desired_goal(state) if self.goal_mode in _XY_GOAL_MODES else None
             ),
@@ -610,6 +620,10 @@ class SafeLearningGoToGoalAdapter:
         safety_components: Mapping[str, jax.Array] | None = None,
         cost_zero_action: jax.Array | None = None,
         cost_neg_action: jax.Array | None = None,
+        sparse_cost_zero_action: jax.Array | None = None,
+        sparse_cost_neg_action: jax.Array | None = None,
+        dense_cost_zero_action: jax.Array | None = None,
+        dense_cost_neg_action: jax.Array | None = None,
         desired_goal: jax.Array | None = None,
         achieved_goal: jax.Array | None = None,
         next_achieved_goal: jax.Array | None = None,
@@ -722,6 +736,22 @@ class SafeLearningGoToGoalAdapter:
             )
         if cost_neg_action is not None:
             extras["cost_neg_action"] = jnp.asarray(cost_neg_action, dtype=jnp.float32)
+        if sparse_cost_zero_action is not None:
+            extras["sparse_cost_zero_action"] = jnp.asarray(
+                sparse_cost_zero_action, dtype=jnp.float32
+            )
+        if sparse_cost_neg_action is not None:
+            extras["sparse_cost_neg_action"] = jnp.asarray(
+                sparse_cost_neg_action, dtype=jnp.float32
+            )
+        if dense_cost_zero_action is not None:
+            extras["dense_cost_zero_action"] = jnp.asarray(
+                dense_cost_zero_action, dtype=jnp.float32
+            )
+        if dense_cost_neg_action is not None:
+            extras["dense_cost_neg_action"] = jnp.asarray(
+                dense_cost_neg_action, dtype=jnp.float32
+            )
         return extras
 
 

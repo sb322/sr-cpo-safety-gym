@@ -531,6 +531,9 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "cost_risky_batch_mean_cost": jnp.asarray([0.08]),
         "cost_uniform_batch_mean_cost": jnp.asarray([0.02]),
         "true_action_cost_spread": jnp.asarray([0.05]),
+        "true_action_active_cost_spread": jnp.asarray([0.05]),
+        "true_action_sparse_cost_spread": jnp.asarray([0.04]),
+        "true_action_dense_cost_spread": jnp.asarray([0.06]),
         "true_action_hard_viol_spread": jnp.asarray([1.0]),
         "true_action_hazard_spread": jnp.asarray([0.5]),
         "qc_action_spread": jnp.asarray([0.07]),
@@ -560,6 +563,9 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "true_action_cost_spread_haz025": jnp.asarray([0.09]),
         "corr_qc_true_cost_haz025": jnp.asarray([0.65]),
         "cf_5_true_cost_spread": jnp.asarray([0.12]),
+        "cf_5_true_active_cost_spread": jnp.asarray([0.12]),
+        "cf_5_true_sparse_cost_spread": jnp.asarray([0.10]),
+        "cf_5_true_dense_cost_spread": jnp.asarray([0.14]),
         "cf_5_true_hard_viol_spread": jnp.asarray([0.34]),
         "cf_5_true_hazard_spread": jnp.asarray([0.23]),
         "cf_5_frac_nonzero_cost_spread": jnp.asarray([0.56]),
@@ -705,7 +711,9 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "cost_risky_available_frac=0.125" in text
     assert "cost_risky_batch_mean_cost=0.0800" in text
     assert "cost_uniform_batch_mean_cost=0.0200" in text
-    assert "counterfactual[ true_action_cost_spread=5.00e-02" in text
+    assert "counterfactual[ true_action_active_cost_spread=5.00e-02" in text
+    assert "true_action_sparse_cost_spread=4.00e-02" in text
+    assert "true_action_dense_cost_spread=6.00e-02" in text
     assert "true_action_hard_viol_spread=1.00e+00" in text
     assert "true_action_hazard_spread=5.00e-01" in text
     assert "qc_action_spread=7.00e-02" in text
@@ -734,7 +742,9 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "corr_qc_true_cost_haz05=0.550" in text
     assert "true_action_cost_spread_haz025=9.00e-02" in text
     assert "corr_qc_true_cost_haz025=0.650" in text
-    assert "counterfactual_H5[ cf_5_true_cost_spread=1.20e-01" in text
+    assert "counterfactual_H5[ cf_5_true_active_cost_spread=1.20e-01" in text
+    assert "cf_5_true_sparse_cost_spread=1.00e-01" in text
+    assert "cf_5_true_dense_cost_spread=1.40e-01" in text
     assert "cf_5_true_hard_viol_spread=3.40e-01" in text
     assert "cf_5_true_hazard_spread=2.30e-01" in text
     assert "cf_5_frac_nonzero_cost_spread=0.560" in text
