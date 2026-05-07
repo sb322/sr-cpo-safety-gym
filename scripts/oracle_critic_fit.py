@@ -9,9 +9,65 @@ and optionally fits the production CostCritic directly on those labels.
 from __future__ import annotations
 
 import csv
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+
+
+def bootstrap_mean_ci_np(
+    values: np.ndarray, *, num_samples: int = 10000, seed: int = 0
+) -> tuple[float, float, float]:
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError("bootstrap values must be one-dimensional")
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(values.shape[0], size=(num_samples, values.shape[0]), replace=True)
+    means = values[idx].mean(axis=1)
+    return float(values.mean()), float(np.percentile(means, 2.5)), float(
+        np.percentile(means, 97.5)
+    )
+
+
+def report_bootstrap(argv: list[str]) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("results_npz")
+    parser.add_argument("--prefix", default="")
+    parser.add_argument("--samples", type=int, default=10000)
+    args = parser.parse_args(argv)
+
+    data = np.load(args.results_npz)
+    spearman_keys = sorted(k for k in data.files if k.endswith("_spearman"))
+    if args.prefix:
+        spearman_keys = [k for k in spearman_keys if k.startswith(args.prefix)]
+    if not spearman_keys:
+        raise ValueError("no per-state spearman arrays found")
+    for spearman_key in spearman_keys:
+        top1_key = spearman_key[: -len("_spearman")] + "_top1"
+        spear_mean, spear_low, spear_high = bootstrap_mean_ci_np(
+            data[spearman_key], num_samples=args.samples
+        )
+        print(
+            f"{spearman_key}: mean={spear_mean:.6g} "
+            f"CI=[{spear_low:.6g}, {spear_high:.6g}]"
+        )
+        if top1_key in data:
+            top1_mean, top1_low, top1_high = bootstrap_mean_ci_np(
+                data[top1_key], num_samples=args.samples
+            )
+            print(
+                f"{top1_key}: mean={top1_mean:.6g} "
+                f"CI=[{top1_low:.6g}, {top1_high:.6g}]"
+            )
+    return 0
+
+
+if len(sys.argv) > 1 and sys.argv[1] == "--report-bootstrap":
+    raise SystemExit(report_bootstrap(sys.argv[2:]))
 
 import jax
 import jax.numpy as jnp
@@ -53,9 +109,12 @@ class OracleFitConfig:
     fit_label_transforms: str = "absolute"
     fit_losses: str = "mse"
     fit_goal_modes: str = "normal"
+    shuffle_goals_across_states: bool = False
     fit_rank_eps: float = 1e-6
     fit_bootstrap_samples: int = 200
     action_effect_eps: float = 1e-6
+    done_mode: str = "extend"
+    oracle_results_npz: str = ""
     include_synthetic_action_norm: bool = True
     output_csv: str = "figures/data/oracle_critic_fit.csv"
     width: int = 256
@@ -331,6 +390,9 @@ def _oracle_rollout_labels(
     flat_state = _repeat_env_state(env_state, num_candidates, num_states)
     flat_actions = jnp.reshape(candidate_actions, (num_states * num_candidates, action_dim))
     next_state, transition = env_adapter.step(flat_state, flat_actions)
+    done_step = _reshape_candidate(
+        1.0 - transition.discount, num_states, num_candidates
+    )
     next_obs_by_action = jnp.reshape(
         env_adapter._state_observation(next_state),
         (num_states, num_candidates, -1),
@@ -349,11 +411,15 @@ def _oracle_rollout_labels(
 
     dense_return = dense_step
     sparse_return = sparse_step
+    alive = 1.0 - done_step
+    any_done = done_step > 0.5
     dense_returns: dict[int, Array] = {}
     sparse_returns: dict[int, Array] = {}
+    valid_by_horizon: dict[int, Array] = {}
     if 1 in horizons:
         dense_returns[1] = dense_return
         sparse_returns[1] = sparse_return
+        valid_by_horizon[1] = ~jnp.any(any_done, axis=1)
 
     current_state = next_state
     discount = config.gamma_c
@@ -368,11 +434,20 @@ def _oracle_rollout_labels(
         sparse = _reshape_candidate(
             transition.extras["sparse_cost"], num_states, num_candidates
         )
-        dense_return = dense_return + discount * dense
-        sparse_return = sparse_return + discount * sparse
+        step_done = _reshape_candidate(
+            1.0 - transition.discount, num_states, num_candidates
+        )
+        # Done-aware oracle labels: after the first terminal transition, extend
+        # the trajectory with zero future safety cost. This avoids treating early
+        # success as more dangerous just because the env wrapper reset.
+        dense_return = dense_return + alive * discount * dense
+        sparse_return = sparse_return + alive * discount * sparse
+        any_done = any_done | ((step_done > 0.5) & (alive > 0.5))
+        alive = alive * (1.0 - step_done)
         if step in horizons:
             dense_returns[step] = dense_return
             sparse_returns[step] = sparse_return
+            valid_by_horizon[step] = ~jnp.any(any_done, axis=1)
         discount *= config.gamma_c
 
     obs = env_adapter._state_observation(env_state)
@@ -386,6 +461,8 @@ def _oracle_rollout_labels(
         "actions": candidate_actions,
         "dense_returns": dense_returns,
         "sparse_returns": sparse_returns,
+        "valid_by_horizon": valid_by_horizon,
+        "done_mode": config.done_mode,
         "min_hazard_dist_h1": min_hazard_dist,
         "next_obs_action_spread": next_obs_spread,
         "synthetic_action_norm": synthetic_action_norm,
@@ -401,6 +478,25 @@ def _action_effect_sanity(spread: Array, eps: float) -> dict[str, Array]:
         "next_obs_action_spread_p50": jnp.quantile(spread, 0.50),
         "next_obs_action_spread_frac_gt_eps": jnp.mean((spread > eps).astype(jnp.float32)),
     }
+
+
+def _shuffle_rows(values: Array, key: Array) -> Array:
+    return values[jax.random.permutation(key, values.shape[0])]
+
+
+def _done_aware_return(costs: Array, discounts: Array, gamma: float) -> Array:
+    """Returns discounted costs, zeroing future terms after first done."""
+
+    costs = jnp.asarray(costs, dtype=jnp.float32)
+    discounts = jnp.asarray(discounts, dtype=jnp.float32)
+    alive = jnp.ones(costs.shape[1:], dtype=jnp.float32)
+    total = jnp.zeros(costs.shape[1:], dtype=jnp.float32)
+    discount = jnp.asarray(1.0, dtype=jnp.float32)
+    for step in range(costs.shape[0]):
+        total = total + alive * discount * costs[step]
+        alive = alive * discounts[step]
+        discount = discount * gamma
+    return total
 
 
 def _flatten_by_state(values: Array, state_indices: Array) -> Array:
@@ -444,15 +540,11 @@ def _fit_oracle_critic(
     fit_loss: str,
     fit_goal_mode: str,
     key: Array,
-) -> dict[str, Array]:
+) -> tuple[dict[str, Array], dict[str, Array]]:
     num_states, num_candidates, action_dim = actions.shape
     perm_key, goal_key, init_key, train_key, boot_key = jax.random.split(key, 5)
     perm = jax.random.permutation(perm_key, num_states)
-    if fit_goal_mode == "normal":
-        fit_goals = goals
-    elif fit_goal_mode == "shuffled":
-        fit_goals = goals[jax.random.permutation(goal_key, num_states)]
-    else:
+    if fit_goal_mode not in {"normal", "shuffled"}:
         raise ValueError("fit_goal_mode must be normal or shuffled")
     val_count = max(1, int(num_states * config.fit_val_fraction))
     val_idx = perm[:val_count]
@@ -460,17 +552,22 @@ def _fit_oracle_critic(
     if train_idx.size == 0:
         raise ValueError("fit_val_fraction leaves no training states")
 
+    train_fit_goals = goals[train_idx]
+    if fit_goal_mode == "shuffled":
+        train_fit_goals = _shuffle_rows(train_fit_goals, goal_key)
+
     train_states = _repeat_by_candidate(states, train_idx, num_candidates)
-    train_goals = _repeat_by_candidate(fit_goals, train_idx, num_candidates)
+    train_goals = jnp.repeat(train_fit_goals[:, None, :], num_candidates, axis=1)
+    train_goals = jnp.reshape(train_goals, (-1, train_fit_goals.shape[-1]))
     train_actions = _flatten_by_state(actions, train_idx)
     train_labels = jnp.ravel(labels[train_idx])
     train_state_states = states[train_idx]
-    train_state_goals = fit_goals[train_idx]
+    train_state_goals = train_fit_goals
     train_state_actions = actions[train_idx]
     train_state_labels = labels[train_idx]
 
     val_states = states[val_idx]
-    val_goals = fit_goals[val_idx]
+    val_goals = goals[val_idx]
     val_actions = actions[val_idx]
     val_labels = labels[val_idx]
     val_actor_actions = actor_actions[val_idx]
@@ -573,7 +670,7 @@ def _fit_oracle_critic(
 
     action_grad = jax.grad(q_sum)(val_actor_actions)
     grad_norm = jnp.mean(jnp.linalg.norm(action_grad, axis=-1))
-    return {
+    metrics = {
         "fit_train_loss_final": losses[-1] if losses else jnp.asarray(float("nan")),
         "fit_val_mse": mse,
         "fit_state_mean_mse": state_mean_mse,
@@ -589,6 +686,12 @@ def _fit_oracle_critic(
         "fit_actor_action_grad_norm": grad_norm,
         "fit_val_states": jnp.asarray(val_idx.size, dtype=jnp.float32),
     }
+    per_state = {
+        "spearman": spearman,
+        "top1": top1_by_state,
+        "val_idx": val_idx.astype(jnp.int32),
+    }
+    return metrics, per_state
 
 
 def _float_dict(values: dict[str, Any]) -> dict[str, float | str | int]:
@@ -616,8 +719,27 @@ def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def _results_npz_path(config: OracleFitConfig) -> Path:
+    if config.oracle_results_npz:
+        return Path(config.oracle_results_npz)
+    stem = Path(config.output_csv).stem
+    return Path("results") / f"oracle_{stem}.npz"
+
+
+def _save_per_state_results(path: Path, records: list[tuple[str, dict[str, Array]]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, np.ndarray] = {}
+    for name, arrays in records:
+        for key, value in arrays.items():
+            payload[f"{name}_{key}"] = np.asarray(value)
+    if payload:
+        np.savez(path, **payload)
+
+
 def main() -> int:
     config = tyro.cli(OracleFitConfig)
+    if config.done_mode not in {"extend", "filter"}:
+        raise ValueError("done_mode must be 'extend' or 'filter'")
     horizons = _parse_csv_ints(config.horizons)
     fit_labels = _parse_csv_values(
         config.fit_labels, allowed={"dense", "sparse"}, name="fit label"
@@ -633,6 +755,8 @@ def main() -> int:
     fit_goal_modes = _parse_csv_values(
         config.fit_goal_modes, allowed={"normal", "shuffled"}, name="fit goal mode"
     )
+    if config.shuffle_goals_across_states and "shuffled" not in fit_goal_modes:
+        fit_goal_modes = (*fit_goal_modes, "shuffled")
     train_config = _make_train_config(config)
     key = jax.random.PRNGKey(config.seed)
     state, objects = initialize_training(train_config)
@@ -686,9 +810,11 @@ def main() -> int:
     }
 
     label_mats: dict[tuple[str, int], Array] = {}
+    valid_masks: dict[int, Array] = {}
     for horizon in horizons:
         label_mats[("dense", horizon)] = dataset["dense_returns"][horizon]
         label_mats[("sparse", horizon)] = dataset["sparse_returns"][horizon]
+        valid_masks[horizon] = dataset["valid_by_horizon"][horizon]
     if config.include_synthetic_action_norm:
         label_mats[("synthetic_action_norm", 0)] = dataset["synthetic_action_norm"]
 
@@ -708,20 +834,44 @@ def main() -> int:
     rows.append(sanity_row)
 
     for (label_name, horizon), labels in label_mats.items():
+        variance_labels = labels
+        states_after_filter = labels.shape[0]
+        if config.done_mode == "filter" and horizon in valid_masks:
+            variance_labels = labels[valid_masks[horizon]]
+            states_after_filter = variance_labels.shape[0]
+        if states_after_filter == 0:
+            continue
         row = {
             **base,
             "kind": "variance",
             "label": label_name,
+            "done_mode": config.done_mode,
+            "states_after_done_filter": int(states_after_filter),
             "horizon": horizon,
         }
-        row.update(_float_dict(_variance_decomposition(labels)))
+        row.update(_float_dict(_variance_decomposition(variance_labels)))
         rows.append(row)
 
     fit_key_base = fit_key
+    per_state_records: list[tuple[str, dict[str, Array]]] = []
     if config.fit_steps > 0:
         for horizon in horizons:
             for label_name in fit_labels:
                 raw_labels = label_mats[(label_name, horizon)]
+                valid_mask = valid_masks[horizon]
+                if config.done_mode == "filter":
+                    raw_labels = raw_labels[valid_mask]
+                    fit_obs = dataset["obs"][valid_mask]
+                    fit_goal = dataset["goal"][valid_mask]
+                    fit_actions = dataset["actions"][valid_mask]
+                    fit_actor_action = dataset["actor_action"][valid_mask]
+                else:
+                    fit_obs = dataset["obs"]
+                    fit_goal = dataset["goal"]
+                    fit_actions = dataset["actions"]
+                    fit_actor_action = dataset["actor_action"]
+                if raw_labels.shape[0] < 2:
+                    continue
                 for transform in fit_label_transforms:
                     labels = _transform_labels(raw_labels, transform)
                     for fit_loss in fit_losses:
@@ -734,26 +884,30 @@ def main() -> int:
                                 "label_transform": transform,
                                 "fit_loss": fit_loss,
                                 "fit_goal_mode": fit_goal_mode,
+                                "done_mode": config.done_mode,
+                                "fit_states_after_done_filter": int(raw_labels.shape[0]),
                                 "horizon": horizon,
                                 "fit_steps": config.fit_steps,
                                 "fit_batch_size": config.fit_batch_size,
                                 "fit_learning_rate": config.fit_learning_rate,
                             }
-                            row.update(
-                                _float_dict(
-                                    _fit_oracle_critic(
-                                        config=config,
-                                        states=dataset["obs"],
-                                        goals=dataset["goal"],
-                                        actions=dataset["actions"],
-                                        labels=labels,
-                                        actor_actions=dataset["actor_action"],
-                                        fit_loss=fit_loss,
-                                        fit_goal_mode=fit_goal_mode,
-                                        key=label_key,
-                                    )
-                                )
+                            fit_metrics, per_state = _fit_oracle_critic(
+                                config=config,
+                                states=fit_obs,
+                                goals=fit_goal,
+                                actions=fit_actions,
+                                labels=labels,
+                                actor_actions=fit_actor_action,
+                                fit_loss=fit_loss,
+                                fit_goal_mode=fit_goal_mode,
+                                key=label_key,
                             )
+                            row.update(_float_dict(fit_metrics))
+                            record_name = (
+                                f"{label_name}_H{horizon}_{transform}_{fit_loss}_"
+                                f"{fit_goal_mode}"
+                            )
+                            per_state_records.append((record_name, per_state))
                             rows.append(row)
         if config.include_synthetic_action_norm:
             raw_labels = label_mats[("synthetic_action_norm", 0)]
@@ -769,31 +923,38 @@ def main() -> int:
                             "label_transform": transform,
                             "fit_loss": fit_loss,
                             "fit_goal_mode": fit_goal_mode,
+                            "done_mode": config.done_mode,
                             "horizon": 0,
                             "fit_steps": config.fit_steps,
                             "fit_batch_size": config.fit_batch_size,
                             "fit_learning_rate": config.fit_learning_rate,
                         }
-                        row.update(
-                            _float_dict(
-                                _fit_oracle_critic(
-                                    config=config,
-                                    states=dataset["obs"],
-                                    goals=dataset["goal"],
-                                    actions=dataset["actions"],
-                                    labels=labels,
-                                    actor_actions=dataset["actor_action"],
-                                    fit_loss=fit_loss,
-                                    fit_goal_mode=fit_goal_mode,
-                                    key=synth_key,
-                                )
-                            )
+                        fit_metrics, per_state = _fit_oracle_critic(
+                            config=config,
+                            states=dataset["obs"],
+                            goals=dataset["goal"],
+                            actions=dataset["actions"],
+                            labels=labels,
+                            actor_actions=dataset["actor_action"],
+                            fit_loss=fit_loss,
+                            fit_goal_mode=fit_goal_mode,
+                            key=synth_key,
                         )
+                        row.update(_float_dict(fit_metrics))
+                        record_name = (
+                            f"synthetic_action_norm_H0_{transform}_{fit_loss}_"
+                            f"{fit_goal_mode}"
+                        )
+                        per_state_records.append((record_name, per_state))
                         rows.append(row)
 
     rows = [_float_dict(row) for row in rows]
     output = Path(config.output_csv)
     _write_rows(output, rows)
+    if per_state_records:
+        results_path = _results_npz_path(config)
+        _save_per_state_results(results_path, per_state_records)
+        print(f"wrote {results_path}")
     print(f"wrote {output}")
     print("config:", asdict(config))
     for row in rows:
