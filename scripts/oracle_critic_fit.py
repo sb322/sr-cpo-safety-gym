@@ -41,12 +41,18 @@ class OracleFitConfig:
     cost_dense_prox_tau: float = 0.5
     actor_checkpoint: str = ""
     state_action_source: str = "actor"
+    state_sample_mode: str = "final"
+    state_sample_min_step: int = 0
+    state_sample_max_step: int = 0
     perturb_std: float = 0.25
     fit_steps: int = 1000
     fit_batch_size: int = 1024
     fit_learning_rate: float = 3e-4
     fit_val_fraction: float = 0.1
     fit_labels: str = "dense"
+    fit_label_transforms: str = "absolute"
+    fit_losses: str = "mse"
+    fit_rank_eps: float = 1e-6
     include_synthetic_action_norm: bool = True
     output_csv: str = "figures/data/oracle_critic_fit.csv"
     width: int = 256
@@ -68,13 +74,15 @@ def _parse_csv_ints(raw: str) -> tuple[int, ...]:
     return tuple(sorted(set(values)))
 
 
-def _parse_csv_strings(raw: str) -> tuple[str, ...]:
+def _parse_csv_values(
+    raw: str, *, allowed: set[str], name: str
+) -> tuple[str, ...]:
     values = tuple(part.strip() for part in raw.split(",") if part.strip())
     if not values:
-        raise ValueError("at least one label is required")
-    unknown = set(values) - {"dense", "sparse"}
+        raise ValueError(f"at least one {name} is required")
+    unknown = set(values) - allowed
     if unknown:
-        raise ValueError(f"unknown fit label(s): {sorted(unknown)}")
+        raise ValueError(f"unknown {name}(s): {sorted(unknown)}")
     return values
 
 
@@ -85,6 +93,18 @@ def _repeat_env_state(env_state: Any, repeats: int, batch_size: int) -> Any:
         return x
 
     return jax.tree_util.tree_map(repeat_leaf, env_state)
+
+
+def _select_env_state(
+    old_state: Any, new_state: Any, mask: Array, batch_size: int
+) -> Any:
+    def select_leaf(old: Any, new: Any) -> Any:
+        if isinstance(new, jax.Array) and new.ndim > 0 and new.shape[0] == batch_size:
+            shaped_mask = jnp.reshape(mask, (batch_size,) + (1,) * (new.ndim - 1))
+            return jnp.where(shaped_mask, new, old)
+        return old
+
+    return jax.tree_util.tree_map(select_leaf, old_state, new_state)
 
 
 def _reshape_candidate(values: Array, num_states: int, num_candidates: int) -> Array:
@@ -109,6 +129,19 @@ def _variance_decomposition(labels: Array) -> dict[str, Array]:
         "spread_magnitude_ratio": jnp.mean(spread) / (magnitude + 1e-12),
         "nonzero_spread_frac": jnp.mean((spread > 1e-6).astype(jnp.float32)),
     }
+
+
+def _transform_labels(labels: Array, transform: str) -> Array:
+    labels = jnp.asarray(labels, dtype=jnp.float32)
+    if transform == "absolute":
+        return labels
+    centered = labels - jnp.mean(labels, axis=1, keepdims=True)
+    if transform == "centered":
+        return centered
+    if transform == "zscore":
+        scale = jnp.std(labels, axis=1, keepdims=True)
+        return centered / (scale + 1e-6)
+    raise ValueError("label transform must be absolute, centered, or zscore")
 
 
 def _rank_rows(x: Array) -> Array:
@@ -204,6 +237,9 @@ def _collect_states(
     if env_adapter is None:
         raise ValueError("real env adapter is required")
 
+    if config.state_sample_mode not in {"final", "uniform"}:
+        raise ValueError("state_sample_mode must be 'final' or 'uniform'")
+
     def collect_step(carry: tuple[Any, Array], _: Array) -> tuple[tuple[Any, Array], None]:
         state, step_key = carry
         step_key, action_key = jax.random.split(step_key)
@@ -226,10 +262,41 @@ def _collect_states(
         next_state, _ = env_adapter.step(state, action)
         return (next_state, step_key), None
 
-    (env_state, _), _ = jax.lax.scan(
-        collect_step, (env_state, key), jnp.arange(config.burnin_steps)
+    if config.state_sample_mode == "final":
+        (env_state, _), _ = jax.lax.scan(
+            collect_step, (env_state, key), jnp.arange(config.burnin_steps)
+        )
+        return env_state
+
+    max_step = config.state_sample_max_step or config.burnin_steps
+    min_step = config.state_sample_min_step
+    if min_step < 0 or max_step < min_step:
+        raise ValueError("uniform state sampling requires 0 <= min_step <= max_step")
+    sample_key, rollout_key = jax.random.split(key)
+    target_steps = jax.random.randint(
+        sample_key,
+        (config.num_states,),
+        minval=min_step,
+        maxval=max_step + 1,
     )
-    return env_state
+
+    def uniform_step(
+        carry: tuple[Any, Any, Array], t: Array
+    ) -> tuple[tuple[Any, Any, Array], None]:
+        state, selected_state, step_key = carry
+        (next_state, step_key), _ = collect_step((state, step_key), t)
+        mask = target_steps == t
+        selected_state = _select_env_state(
+            selected_state, next_state, mask, config.num_states
+        )
+        return (next_state, selected_state, step_key), None
+
+    (_, selected_state, _), _ = jax.lax.scan(
+        uniform_step,
+        (env_state, env_state, rollout_key),
+        jnp.arange(1, max_step + 1),
+    )
+    return selected_state
 
 
 def _oracle_rollout_labels(
@@ -341,6 +408,7 @@ def _fit_oracle_critic(
     actions: Array,
     labels: Array,
     actor_actions: Array,
+    fit_loss: str,
     key: Array,
 ) -> dict[str, Array]:
     num_states, num_candidates, action_dim = actions.shape
@@ -355,6 +423,10 @@ def _fit_oracle_critic(
     train_goals = _repeat_by_candidate(goals, train_idx, num_candidates)
     train_actions = _flatten_by_state(actions, train_idx)
     train_labels = jnp.ravel(labels[train_idx])
+    train_state_states = states[train_idx]
+    train_state_goals = goals[train_idx]
+    train_state_actions = actions[train_idx]
+    train_state_labels = labels[train_idx]
 
     val_states = states[val_idx]
     val_goals = goals[val_idx]
@@ -377,9 +449,12 @@ def _fit_oracle_critic(
     optimizer = optax.adam(config.fit_learning_rate)
     opt_state = optimizer.init(params)
     batch_size = min(config.fit_batch_size, train_labels.shape[0])
+    state_batch_size = min(
+        max(1, config.fit_batch_size // num_candidates), train_state_labels.shape[0]
+    )
 
     @jax.jit
-    def train_step(
+    def mse_train_step(
         params: Any, opt_state: optax.OptState, step_key: Array
     ) -> tuple[Any, optax.OptState, Array]:
         idx = jax.random.randint(step_key, (batch_size,), 0, train_labels.shape[0])
@@ -395,10 +470,44 @@ def _fit_oracle_critic(
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss
 
+    @jax.jit
+    def rank_train_step(
+        params: Any, opt_state: optax.OptState, step_key: Array
+    ) -> tuple[Any, optax.OptState, Array]:
+        idx = jax.random.randint(
+            step_key, (state_batch_size,), 0, train_state_labels.shape[0]
+        )
+        batch_states = train_state_states[idx]
+        batch_goals = train_state_goals[idx]
+        batch_actions = train_state_actions[idx]
+        batch_labels = train_state_labels[idx]
+
+        def loss_fn(p: Any) -> Array:
+            pred = _predict_by_state(
+                critic, p, batch_states, batch_goals, batch_actions
+            )
+            pred_pair = pred[:, None, :] - pred[:, :, None]
+            label_pair = batch_labels[:, None, :] - batch_labels[:, :, None]
+            target = jnp.sign(label_pair)
+            mask = jnp.abs(label_pair) > config.fit_rank_eps
+            loss = jax.nn.softplus(-target * pred_pair)
+            return jnp.sum(jnp.where(mask, loss, 0.0)) / (jnp.sum(mask) + 1e-6)
+
+        loss, grads = jax.value_and_grad(loss_fn)(params)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss
+
+    if fit_loss not in {"mse", "rank"}:
+        raise ValueError("fit_loss must be mse or rank")
+
     losses = []
     for _ in range(config.fit_steps):
         train_key, step_key = jax.random.split(train_key)
-        params, opt_state, loss = train_step(params, opt_state, step_key)
+        if fit_loss == "mse":
+            params, opt_state, loss = mse_train_step(params, opt_state, step_key)
+        else:
+            params, opt_state, loss = rank_train_step(params, opt_state, step_key)
         losses.append(loss)
 
     pred = _predict_by_state(critic, params, val_states, val_goals, val_actions)
@@ -458,7 +567,17 @@ def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> int:
     config = tyro.cli(OracleFitConfig)
     horizons = _parse_csv_ints(config.horizons)
-    fit_labels = _parse_csv_strings(config.fit_labels)
+    fit_labels = _parse_csv_values(
+        config.fit_labels, allowed={"dense", "sparse"}, name="fit label"
+    )
+    fit_label_transforms = _parse_csv_values(
+        config.fit_label_transforms,
+        allowed={"absolute", "centered", "zscore"},
+        name="fit label transform",
+    )
+    fit_losses = _parse_csv_values(
+        config.fit_losses, allowed={"mse", "rank"}, name="fit loss"
+    )
     train_config = _make_train_config(config)
     key = jax.random.PRNGKey(config.seed)
     state, objects = initialize_training(train_config)
@@ -505,6 +624,9 @@ def main() -> int:
         "gamma_c": config.gamma_c,
         "tau": config.cost_dense_prox_tau,
         "state_action_source": config.state_action_source,
+        "state_sample_mode": config.state_sample_mode,
+        "state_sample_min_step": config.state_sample_min_step,
+        "state_sample_max_step": config.state_sample_max_step,
         "actor_checkpoint": config.actor_checkpoint,
     }
 
@@ -529,56 +651,69 @@ def main() -> int:
     if config.fit_steps > 0:
         for horizon in horizons:
             for label_name in fit_labels:
-                fit_key_base, label_key = jax.random.split(fit_key_base)
-                labels = label_mats[(label_name, horizon)]
-                row = {
-                    **base,
-                    "kind": "fit",
-                    "label": label_name,
-                    "horizon": horizon,
-                    "fit_steps": config.fit_steps,
-                    "fit_batch_size": config.fit_batch_size,
-                    "fit_learning_rate": config.fit_learning_rate,
-                }
-                row.update(
-                    _float_dict(
-                        _fit_oracle_critic(
-                            config=config,
-                            states=dataset["obs"],
-                            goals=dataset["goal"],
-                            actions=dataset["actions"],
-                            labels=labels,
-                            actor_actions=dataset["actor_action"],
-                            key=label_key,
+                raw_labels = label_mats[(label_name, horizon)]
+                for transform in fit_label_transforms:
+                    labels = _transform_labels(raw_labels, transform)
+                    for fit_loss in fit_losses:
+                        fit_key_base, label_key = jax.random.split(fit_key_base)
+                        row = {
+                            **base,
+                            "kind": "fit",
+                            "label": label_name,
+                            "label_transform": transform,
+                            "fit_loss": fit_loss,
+                            "horizon": horizon,
+                            "fit_steps": config.fit_steps,
+                            "fit_batch_size": config.fit_batch_size,
+                            "fit_learning_rate": config.fit_learning_rate,
+                        }
+                        row.update(
+                            _float_dict(
+                                _fit_oracle_critic(
+                                    config=config,
+                                    states=dataset["obs"],
+                                    goals=dataset["goal"],
+                                    actions=dataset["actions"],
+                                    labels=labels,
+                                    actor_actions=dataset["actor_action"],
+                                    fit_loss=fit_loss,
+                                    key=label_key,
+                                )
+                            )
+                        )
+                        rows.append(row)
+        if config.include_synthetic_action_norm:
+            raw_labels = label_mats[("synthetic_action_norm", 0)]
+            for transform in fit_label_transforms:
+                labels = _transform_labels(raw_labels, transform)
+                for fit_loss in fit_losses:
+                    fit_key_base, synth_key = jax.random.split(fit_key_base)
+                    row = {
+                        **base,
+                        "kind": "fit",
+                        "label": "synthetic_action_norm",
+                        "label_transform": transform,
+                        "fit_loss": fit_loss,
+                        "horizon": 0,
+                        "fit_steps": config.fit_steps,
+                        "fit_batch_size": config.fit_batch_size,
+                        "fit_learning_rate": config.fit_learning_rate,
+                    }
+                    row.update(
+                        _float_dict(
+                            _fit_oracle_critic(
+                                config=config,
+                                states=dataset["obs"],
+                                goals=dataset["goal"],
+                                actions=dataset["actions"],
+                                labels=labels,
+                                actor_actions=dataset["actor_action"],
+                                fit_loss=fit_loss,
+                                key=synth_key,
+                            )
                         )
                     )
-                )
-                rows.append(row)
-        if config.include_synthetic_action_norm:
-            fit_key_base, synth_key = jax.random.split(fit_key_base)
-            row = {
-                **base,
-                "kind": "fit",
-                "label": "synthetic_action_norm",
-                "horizon": 0,
-                "fit_steps": config.fit_steps,
-                "fit_batch_size": config.fit_batch_size,
-                "fit_learning_rate": config.fit_learning_rate,
-            }
-            row.update(
-                _float_dict(
-                    _fit_oracle_critic(
-                        config=config,
-                        states=dataset["obs"],
-                        goals=dataset["goal"],
-                        actions=dataset["actions"],
-                        labels=label_mats[("synthetic_action_norm", 0)],
-                        actor_actions=dataset["actor_action"],
-                        key=synth_key,
-                    )
-                )
-            )
-            rows.append(row)
+                    rows.append(row)
 
     rows = [_float_dict(row) for row in rows]
     output = Path(config.output_csv)
@@ -599,6 +734,8 @@ def main() -> int:
             print(
                 "fit",
                 f"label={row['label']}",
+                f"transform={row.get('label_transform', 'absolute')}",
+                f"loss={row.get('fit_loss', 'mse')}",
                 f"H={row['horizon']}",
                 f"spearman={float(row['fit_within_spearman']):.3f}",
                 f"top1={float(row['fit_top1_match']):.3f}",
