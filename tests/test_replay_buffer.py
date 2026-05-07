@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 
 from sr_cpo.replay_buffer import (
+    _risk_transition_mask,
     insert_trajectory,
     make_replay_buffer,
     replay_risky_available_fraction,
@@ -180,3 +181,25 @@ def test_risk_biased_sample_falls_back_when_no_risky_samples() -> None:
     assert float(probes["cost_risk_replay_ratio_actual"]) == 0.0
     assert float(probes["cost_risky_available_frac"]) == 0.0
     assert bool(jnp.all(batch.extras["cost"] == 0.0))
+
+
+def test_risk_mask_ignores_dense_positive_costs_without_hard_violations() -> None:
+    buffer = make_replay_buffer(
+        capacity=1, episode_length=4, observation_dim=3, action_dim=2
+    )
+    observations, actions, rewards, discounts, costs, d_wall, hard = _trajectory(0.0)
+    buffer = insert_trajectory(
+        buffer,
+        observations=observations,
+        actions=actions,
+        rewards=rewards,
+        discounts=discounts,
+        costs=jnp.ones_like(costs) * 0.5,
+        d_wall=d_wall,
+        hard_violations=jnp.zeros_like(hard),
+    )
+
+    risk = _risk_transition_mask(buffer)
+
+    assert not bool(jnp.any(risk))
+    assert float(replay_risky_available_fraction(buffer)) == 0.0

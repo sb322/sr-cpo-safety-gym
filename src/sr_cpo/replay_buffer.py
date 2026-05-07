@@ -38,8 +38,11 @@ def _risk_transition_mask(
     del hazard_lidar_threshold
     valid = _valid_transition_mask(buffer)
     hard_risk = (buffer.hard_violations > 0.5) & valid
-    cost_risk = (buffer.costs > 0.0) & valid
-    return jnp.where(jnp.any(hard_risk), hard_risk, cost_risk)
+    # In dense-cost runs, buffer.costs is positive almost everywhere, so using it
+    # as a fallback makes every valid transition look risky.  Keep replay-risk
+    # diagnostics anchored to sparse hard events; callers fall back to uniform
+    # sampling when no hard-risk transitions are available.
+    return hard_risk
 
 
 def replay_risky_available_fraction(
