@@ -389,6 +389,7 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_rank_loss_weight == 0.0
     assert TrainConfig().cost_rank_horizon == 50
     assert TrainConfig().cost_rank_label_kind == "dense"
+    assert TrainConfig().cost_rank_min_label_spread == 1e-4
     assert TrainConfig().cost_rank_debug_dump is False
     assert TrainConfig().cost_risk_replay_ratio == 0.0
     assert TrainConfig().eval_counterfactual_action_probes is False
@@ -558,6 +559,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "rank_label_pair_frac_epoch": jnp.asarray([0.875]),
         "rank_rollout_alive_frac": jnp.asarray([0.9]),
         "rank_example_valid_frac": jnp.asarray([0.75]),
+        "rank_terminal_free_frac": jnp.asarray([0.5]),
         "true_action_cost_spread": jnp.asarray([0.05]),
         "true_action_active_cost_spread": jnp.asarray([0.05]),
         "true_action_sparse_cost_spread": jnp.asarray([0.04]),
@@ -746,6 +748,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "cost_rank_top1_match=0.250" in text
     assert "rank_label_within_between=1.20e-02" in text
     assert "rank_example_valid_frac=0.750" in text
+    assert "rank_terminal_free_frac=0.500" in text
     assert "counterfactual[ true_action_active_cost_spread=5.00e-02" in text
     assert "true_action_sparse_cost_spread=4.00e-02" in text
     assert "true_action_dense_cost_spread=6.00e-02" in text

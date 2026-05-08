@@ -119,6 +119,7 @@ class TrainConfig:
     cost_rank_candidate_perturb_std: float = 0.5
     cost_rank_uniform_random_frac: float = 0.5
     cost_rank_label_epsilon: float = 0.0
+    cost_rank_min_label_spread: float = 1e-4
     cost_rank_label_kind: str = "dense"
     cost_rank_done_mode: str = "extend"
     cost_rank_debug_dump: bool = False
@@ -504,7 +505,12 @@ def _collect_rank_labels(
         jnp.arange(config.cost_rank_horizon),
     )
     dense_cost_trace, sparse_cost_trace, done_trace, alive_trace = rank_trace
-    example_valid = jnp.all(alive_final > 0.5, axis=-1)
+    terminal_free = jnp.all(alive_final > 0.5, axis=-1)
+    label = dense_labels if config.cost_rank_label_kind == "dense" else sparse_labels
+    label_spread = jnp.max(label, axis=-1) - jnp.min(label, axis=-1)
+    example_valid = label_spread > jnp.asarray(
+        config.cost_rank_min_label_spread, dtype=jnp.float32
+    )
     rank_buffer = insert_rank_examples(
         train_state.rank_buffer,
         states=selected_model_obs,
@@ -514,7 +520,6 @@ def _collect_rank_labels(
         sparse_labels=sparse_labels,
         valid=example_valid,
     )
-    label = dense_labels if config.cost_rank_label_kind == "dense" else sparse_labels
     centered = label - jnp.mean(label, axis=-1, keepdims=True)
     within_var = jnp.mean(jnp.var(label, axis=-1))
     between_var = jnp.var(jnp.mean(label, axis=-1))
@@ -540,6 +545,7 @@ def _collect_rank_labels(
         ),
         "rank_rollout_alive_frac": jnp.mean(alive_final),
         "rank_example_valid_frac": jnp.mean(example_valid.astype(jnp.float32)),
+        "rank_terminal_free_frac": jnp.mean(terminal_free.astype(jnp.float32)),
     }
     if config.cost_rank_debug_dump:
         first_done = jnp.argmax(done_trace[:, 0, :] > 0.5, axis=0)
@@ -1766,6 +1772,7 @@ def _collect_toy_trajectory(
         "rank_label_pair_frac_epoch": jnp.asarray(0.0, dtype=jnp.float32),
         "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
         "rank_example_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_terminal_free_frac": jnp.asarray(0.0, dtype=jnp.float32),
     }
     next_state = train_state.replace(
         key=key,
@@ -1951,6 +1958,7 @@ def _collect_real_trajectory(
             "rank_label_pair_frac_epoch": jnp.asarray(0.0, dtype=jnp.float32),
             "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
             "rank_example_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
+            "rank_terminal_free_frac": jnp.asarray(0.0, dtype=jnp.float32),
         }
     metrics.update(rank_aux)
     next_state = train_state.replace(
@@ -2446,6 +2454,7 @@ def make_training_epoch(
         ]
         metrics["rank_rollout_alive_frac"] = collect_metrics["rank_rollout_alive_frac"]
         metrics["rank_example_valid_frac"] = collect_metrics["rank_example_valid_frac"]
+        metrics["rank_terminal_free_frac"] = collect_metrics["rank_terminal_free_frac"]
         return state, metrics
 
     @jax.jit
@@ -2490,6 +2499,8 @@ def initialize_training(
         raise ValueError("cost_rank_candidate_perturb_std must be non-negative")
     if config.cost_rank_label_epsilon < 0.0:
         raise ValueError("cost_rank_label_epsilon must be non-negative")
+    if config.cost_rank_min_label_spread < 0.0:
+        raise ValueError("cost_rank_min_label_spread must be non-negative")
     if config.cost_rank_label_kind not in {"dense", "sparse"}:
         raise ValueError("cost_rank_label_kind must be 'dense' or 'sparse'")
     if config.cost_rank_done_mode not in {"extend"}:
@@ -3058,7 +3069,9 @@ def format_epoch_metrics(
                 f"rank_rollout_alive_frac="
                 f"{_mean_float(metrics, 'rank_rollout_alive_frac'):.3f} "
                 f"rank_example_valid_frac="
-                f"{_mean_float(metrics, 'rank_example_valid_frac'):.3f}]"
+                f"{_mean_float(metrics, 'rank_example_valid_frac'):.3f} "
+                f"rank_terminal_free_frac="
+                f"{_mean_float(metrics, 'rank_terminal_free_frac'):.3f}]"
             ),
             *(
                 [counterfactual_line]

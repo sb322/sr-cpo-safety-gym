@@ -29,6 +29,7 @@ HEADER_KEYS = (
     "COST_RANK_CANDIDATE_PERTURB_STD",
     "COST_RANK_UNIFORM_RANDOM_FRAC",
     "COST_RANK_LABEL_EPSILON",
+    "COST_RANK_MIN_LABEL_SPREAD",
     "COST_RANK_LABEL_KIND",
     "COST_MODE",
     "COST_DENSE_PROX_TAU",
@@ -188,6 +189,7 @@ FIELDNAMES = (
     "cost_rank_candidate_perturb_std",
     "cost_rank_uniform_random_frac",
     "cost_rank_label_epsilon",
+    "cost_rank_min_label_spread",
     "cost_rank_label_kind",
     "cost_mode",
     "cost_dense_prox_tau",
@@ -257,6 +259,7 @@ FIELDNAMES = (
     "rank_label_pair_frac_epoch",
     "rank_rollout_alive_frac",
     "rank_example_valid_frac",
+    "rank_terminal_free_frac",
     *COUNTERFACTUAL_METRIC_KEYS,
     *EVAL_METRIC_KEYS,
 )
@@ -331,6 +334,7 @@ def parse_log(path: Path) -> dict[str, str]:
             "COST_RANK_UNIFORM_RANDOM_FRAC", ""
         ),
         "cost_rank_label_epsilon": header.get("COST_RANK_LABEL_EPSILON", ""),
+        "cost_rank_min_label_spread": header.get("COST_RANK_MIN_LABEL_SPREAD", ""),
         "cost_rank_label_kind": header.get("COST_RANK_LABEL_KIND", ""),
         "cost_mode": header.get("COST_MODE", ""),
         "cost_dense_prox_tau": header.get("COST_DENSE_PROX_TAU", ""),
@@ -414,6 +418,7 @@ def parse_log(path: Path) -> dict[str, str]:
         ),
         "rank_rollout_alive_frac": last_metrics.get("rank_rollout_alive_frac", ""),
         "rank_example_valid_frac": last_metrics.get("rank_example_valid_frac", ""),
+        "rank_terminal_free_frac": last_metrics.get("rank_terminal_free_frac", ""),
         "cost_target": last_metrics.get("c_target", ""),
     }
     for key in METRIC_KEYS:
