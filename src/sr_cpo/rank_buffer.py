@@ -65,11 +65,17 @@ def insert_rank_examples(
     goals: jax.Array,
     dense_labels: jax.Array,
     sparse_labels: jax.Array,
+    valid: jax.Array | None = None,
 ) -> RankBuffer:
     """Inserts a batch of labeled candidate sets into the ring buffer."""
 
     capacity = buffer.states.shape[0]
     num_examples = states.shape[0]
+    valid_arr = (
+        jnp.ones((num_examples,), dtype=bool)
+        if valid is None
+        else jnp.asarray(valid, dtype=bool)
+    )
     offsets = jnp.arange(num_examples, dtype=jnp.int32)
     indices = (buffer.write_index + offsets) % capacity
     next_write_index = (buffer.write_index + num_examples) % capacity
@@ -86,7 +92,7 @@ def insert_rank_examples(
         sparse_labels=buffer.sparse_labels.at[indices].set(
             jnp.asarray(sparse_labels, dtype=jnp.float32)
         ),
-        valid=buffer.valid.at[indices].set(True),
+        valid=buffer.valid.at[indices].set(valid_arr),
         write_index=next_write_index.astype(jnp.int32),
         size=next_size.astype(jnp.int32),
     )

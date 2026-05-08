@@ -256,6 +256,7 @@ FIELDNAMES = (
     "rank_label_mean_spread",
     "rank_label_pair_frac_epoch",
     "rank_rollout_alive_frac",
+    "rank_example_valid_frac",
     *COUNTERFACTUAL_METRIC_KEYS,
     *EVAL_METRIC_KEYS,
 )
@@ -412,6 +413,7 @@ def parse_log(path: Path) -> dict[str, str]:
             "rank_label_pair_frac_epoch", ""
         ),
         "rank_rollout_alive_frac": last_metrics.get("rank_rollout_alive_frac", ""),
+        "rank_example_valid_frac": last_metrics.get("rank_example_valid_frac", ""),
         "cost_target": last_metrics.get("c_target", ""),
     }
     for key in METRIC_KEYS:

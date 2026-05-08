@@ -504,6 +504,7 @@ def _collect_rank_labels(
         jnp.arange(config.cost_rank_horizon),
     )
     dense_cost_trace, sparse_cost_trace, done_trace, alive_trace = rank_trace
+    example_valid = jnp.all(alive_final > 0.5, axis=-1)
     rank_buffer = insert_rank_examples(
         train_state.rank_buffer,
         states=selected_model_obs,
@@ -511,6 +512,7 @@ def _collect_rank_labels(
         goals=selected_goal,
         dense_labels=dense_labels,
         sparse_labels=sparse_labels,
+        valid=example_valid,
     )
     label = dense_labels if config.cost_rank_label_kind == "dense" else sparse_labels
     centered = label - jnp.mean(label, axis=-1, keepdims=True)
@@ -537,6 +539,7 @@ def _collect_rank_labels(
             1.0,
         ),
         "rank_rollout_alive_frac": jnp.mean(alive_final),
+        "rank_example_valid_frac": jnp.mean(example_valid.astype(jnp.float32)),
     }
     if config.cost_rank_debug_dump:
         first_done = jnp.argmax(done_trace[:, 0, :] > 0.5, axis=0)
@@ -1762,6 +1765,7 @@ def _collect_toy_trajectory(
         "rank_label_mean_spread": jnp.asarray(0.0, dtype=jnp.float32),
         "rank_label_pair_frac_epoch": jnp.asarray(0.0, dtype=jnp.float32),
         "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_example_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
     }
     next_state = train_state.replace(
         key=key,
@@ -1946,6 +1950,7 @@ def _collect_real_trajectory(
             "rank_label_mean_spread": jnp.asarray(0.0, dtype=jnp.float32),
             "rank_label_pair_frac_epoch": jnp.asarray(0.0, dtype=jnp.float32),
             "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
+            "rank_example_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
         }
     metrics.update(rank_aux)
     next_state = train_state.replace(
@@ -2440,6 +2445,7 @@ def make_training_epoch(
             "rank_label_pair_frac_epoch"
         ]
         metrics["rank_rollout_alive_frac"] = collect_metrics["rank_rollout_alive_frac"]
+        metrics["rank_example_valid_frac"] = collect_metrics["rank_example_valid_frac"]
         return state, metrics
 
     @jax.jit
@@ -3050,7 +3056,9 @@ def format_epoch_metrics(
                 f"rank_label_pair_frac_epoch="
                 f"{_mean_float(metrics, 'rank_label_pair_frac_epoch'):.3f} "
                 f"rank_rollout_alive_frac="
-                f"{_mean_float(metrics, 'rank_rollout_alive_frac'):.3f}]"
+                f"{_mean_float(metrics, 'rank_rollout_alive_frac'):.3f} "
+                f"rank_example_valid_frac="
+                f"{_mean_float(metrics, 'rank_example_valid_frac'):.3f}]"
             ),
             *(
                 [counterfactual_line]

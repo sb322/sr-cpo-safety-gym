@@ -557,6 +557,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "rank_label_mean_spread": jnp.asarray([0.34]),
         "rank_label_pair_frac_epoch": jnp.asarray([0.875]),
         "rank_rollout_alive_frac": jnp.asarray([0.9]),
+        "rank_example_valid_frac": jnp.asarray([0.75]),
         "true_action_cost_spread": jnp.asarray([0.05]),
         "true_action_active_cost_spread": jnp.asarray([0.05]),
         "true_action_sparse_cost_spread": jnp.asarray([0.04]),
@@ -744,6 +745,7 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "cost_rank_spearman=0.600" in text
     assert "cost_rank_top1_match=0.250" in text
     assert "rank_label_within_between=1.20e-02" in text
+    assert "rank_example_valid_frac=0.750" in text
     assert "counterfactual[ true_action_active_cost_spread=5.00e-02" in text
     assert "true_action_sparse_cost_spread=4.00e-02" in text
     assert "true_action_dense_cost_spread=6.00e-02" in text

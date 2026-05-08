@@ -51,3 +51,28 @@ def test_sample_rank_batch_marks_empty_rows_invalid() -> None:
 
     assert batch.states.shape == (5, 2)
     assert not bool(jnp.any(batch.valid))
+
+
+def test_rank_buffer_preserves_inserted_valid_mask() -> None:
+    buffer = make_rank_buffer(
+        capacity=3,
+        state_dim=2,
+        action_dim=1,
+        goal_dim=2,
+        num_candidates=2,
+    )
+    states = jnp.arange(6, dtype=jnp.float32).reshape(3, 2)
+    actions = jnp.zeros((3, 2, 1), dtype=jnp.float32)
+    labels = jnp.ones((3, 2), dtype=jnp.float32)
+
+    buffer = insert_rank_examples(
+        buffer,
+        states=states,
+        candidate_actions=actions,
+        goals=states,
+        dense_labels=labels,
+        sparse_labels=labels,
+        valid=jnp.asarray([True, False, True]),
+    )
+
+    assert bool(jnp.array_equal(buffer.valid, jnp.asarray([True, False, True])))
