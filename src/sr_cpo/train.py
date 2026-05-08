@@ -362,6 +362,22 @@ def _repeat_env_state(env_state: Any, repeats: int, batch_size: int) -> Any:
     return jax.tree_util.tree_map(repeat_leaf, env_state)
 
 
+def _flatten_env_state_history(env_states: Any, time_size: int, env_size: int) -> Any:
+    """Flattens scan-stacked env states from ``[T, B, ...]`` to ``[T*B, ...]``."""
+
+    def flatten_leaf(leaf: Any) -> Any:
+        if (
+            hasattr(leaf, "shape")
+            and len(leaf.shape) >= 2
+            and leaf.shape[0] == time_size
+            and leaf.shape[1] == env_size
+        ):
+            return leaf.reshape((time_size * env_size, *leaf.shape[2:]))
+        return leaf
+
+    return jax.tree_util.tree_map(flatten_leaf, env_states)
+
+
 def _deterministic_actor_action(
     actor: Actor,
     actor_params: Any,
@@ -408,6 +424,7 @@ def _collect_rank_labels(
     objects: TrainingObjects,
     config: TrainConfig,
     env_state: Any,
+    state_pool_size: int,
     key: Array,
 ) -> tuple[RankBuffer, Mapping[str, Array]]:
     env_adapter = objects.env_adapter
@@ -419,9 +436,9 @@ def _collect_rank_labels(
         select_key,
         (config.cost_rank_states_per_epoch,),
         0,
-        config.num_envs,
+        state_pool_size,
     )
-    selected_env_state = _take_env_state(env_state, state_indices, config.num_envs)
+    selected_env_state = _take_env_state(env_state, state_indices, state_pool_size)
     selected_obs = _real_state_observation(env_adapter, selected_env_state)
     selected_model_obs = _mask_goal_in_state(selected_obs, config)
     selected_goal = _real_rollout_goal(env_adapter, selected_env_state, config)
@@ -1768,7 +1785,7 @@ def _collect_real_trajectory(
 
     def collect_step(
         carry: tuple[Array, Any], _: Array
-    ) -> tuple[tuple[Array, Any], Transition]:
+    ) -> tuple[tuple[Array, Any], tuple[Any, Transition]]:
         step_key, env_state = carry
         step_key, actor_key = jax.random.split(step_key)
         goal = _real_rollout_goal(env_adapter, env_state, config)
@@ -1782,9 +1799,9 @@ def _collect_real_trajectory(
             actor_key,
         )
         next_env_state, transition = env_adapter.step(env_state, sample.action)
-        return (step_key, next_env_state), transition
+        return (step_key, next_env_state), (env_state, transition)
 
-    (next_key, next_env_state), transitions = jax.lax.scan(
+    (next_key, next_env_state), (rollout_env_states, transitions) = jax.lax.scan(
         collect_step,
         (scan_key, train_state.env_state),
         jnp.arange(config.unroll_length),
@@ -1910,11 +1927,17 @@ def _collect_real_trajectory(
     }
     rank_buffer = train_state.rank_buffer
     if config.cost_rank_loss_weight > 0.0:
+        rank_state_pool = _flatten_env_state_history(
+            rollout_env_states,
+            config.unroll_length,
+            config.num_envs,
+        )
         rank_buffer, rank_aux = _collect_rank_labels(
             train_state,
             objects,
             config,
-            next_env_state,
+            rank_state_pool,
+            config.unroll_length * config.num_envs,
             rank_key,
         )
     else:

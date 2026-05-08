@@ -9,6 +9,7 @@ from sr_cpo.env_wrappers import Transition
 from sr_cpo.train import (
     ToyEnvState,
     TrainConfig,
+    _flatten_env_state_history,
     _mask_goal_in_state,
     format_epoch_metrics,
     initialize_training,
@@ -125,6 +126,18 @@ def test_training_epoch_can_collect_from_real_env_adapter_path() -> None:
     assert state.replay.actions.shape[-1] == adapter.action_size
     for leaf in jax.tree_util.tree_leaves(metrics):
         assert bool(jnp.all(jnp.isfinite(leaf)))
+
+
+def test_flatten_env_state_history_collapses_time_and_env_axes() -> None:
+    env_states = ToyEnvState(
+        obs=jnp.arange(24, dtype=jnp.float32).reshape(3, 4, 2)
+    )
+
+    flat = _flatten_env_state_history(env_states, time_size=3, env_size=4)
+
+    assert flat.obs.shape == (12, 2)
+    assert bool(jnp.all(flat.obs[0] == env_states.obs[0, 0]))
+    assert bool(jnp.all(flat.obs[5] == env_states.obs[1, 1]))
 
 
 def test_training_epoch_can_collect_xy_goals_from_real_env_adapter_path() -> None:
