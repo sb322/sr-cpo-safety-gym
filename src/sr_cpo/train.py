@@ -121,6 +121,7 @@ class TrainConfig:
     cost_rank_label_epsilon: float = 0.0
     cost_rank_label_kind: str = "dense"
     cost_rank_done_mode: str = "extend"
+    cost_rank_debug_dump: bool = False
     cost_risk_replay_ratio: float = 0.0
     cost_risk_hazard_lidar_thresh: float = 0.5
     cost_risk_min_fraction_available: float = 0.0
@@ -442,8 +443,9 @@ def _collect_rank_labels(
 
     def rank_step(
         carry: tuple[Any, Array, Array, Array], step_idx: Array
-    ) -> tuple[tuple[Any, Array, Array, Array], None]:
+    ) -> tuple[tuple[Any, Array, Array, Array], tuple[Array, Array, Array, Array]]:
         step_env_state, dense_return, sparse_return, alive = carry
+        alive_before = alive
         obs = _real_state_observation(env_adapter, step_env_state)
         goal = _real_rollout_goal(env_adapter, step_env_state, config)
         follow_action = _deterministic_actor_action(
@@ -472,15 +474,19 @@ def _collect_rank_labels(
             num_states, num_candidates
         )
         alive = alive * (1.0 - done)
-        return (next_env_state, dense_return, sparse_return, alive), None
+        return (
+            (next_env_state, dense_return, sparse_return, alive),
+            (dense_cost, sparse_cost, done, alive_before),
+        )
 
     zeros = jnp.zeros((num_states, num_candidates), dtype=jnp.float32)
     alive = jnp.ones((num_states, num_candidates), dtype=jnp.float32)
-    (_, dense_labels, sparse_labels, alive_final), _ = jax.lax.scan(
+    (_, dense_labels, sparse_labels, alive_final), rank_trace = jax.lax.scan(
         rank_step,
         (flat_env_state, zeros, zeros, alive),
         jnp.arange(config.cost_rank_horizon),
     )
+    dense_cost_trace, sparse_cost_trace, done_trace, alive_trace = rank_trace
     rank_buffer = insert_rank_examples(
         train_state.rank_buffer,
         states=selected_model_obs,
@@ -515,6 +521,68 @@ def _collect_rank_labels(
         ),
         "rank_rollout_alive_frac": jnp.mean(alive_final),
     }
+    if config.cost_rank_debug_dump:
+        first_done = jnp.argmax(done_trace[:, 0, :] > 0.5, axis=0)
+        any_done = jnp.any(done_trace[:, 0, :] > 0.5, axis=0)
+        first_done = jnp.where(
+            any_done,
+            first_done,
+            jnp.asarray(config.cost_rank_horizon, dtype=first_done.dtype),
+        )
+
+        def print_dump(_: None) -> Array:
+            jax.debug.print(
+                (
+                    "RANK_DEBUG step={step} seed={seed} state_index={state_index} "
+                    "horizon={horizon} gamma={gamma} tau={tau}\n"
+                    "RANK_DEBUG obs_head={obs_head}\n"
+                    "RANK_DEBUG goal={goal}\n"
+                    "RANK_DEBUG actor_action={actor_action}\n"
+                    "RANK_DEBUG candidate_actions={candidate_actions}\n"
+                    "RANK_DEBUG dense_labels={dense_labels}\n"
+                    "RANK_DEBUG sparse_labels={sparse_labels}\n"
+                    "RANK_DEBUG dense_spread={dense_spread} "
+                    "sparse_spread={sparse_spread} within_var={within_var} "
+                    "between_var={between_var} wb={wb}\n"
+                    "RANK_DEBUG first_done_step={first_done_step}\n"
+                    "RANK_DEBUG alive_final={alive_final}\n"
+                    "RANK_DEBUG alive_trace={alive_trace}\n"
+                    "RANK_DEBUG done_trace={done_trace}\n"
+                    "RANK_DEBUG dense_cost_trace={dense_cost_trace}\n"
+                    "RANK_DEBUG sparse_cost_trace={sparse_cost_trace}"
+                ),
+                step=train_state.step,
+                seed=jnp.asarray(config.seed, dtype=jnp.int32),
+                state_index=state_indices[0],
+                horizon=jnp.asarray(config.cost_rank_horizon, dtype=jnp.int32),
+                gamma=jnp.asarray(config.gamma_c, dtype=jnp.float32),
+                tau=jnp.asarray(config.cost_dense_prox_tau, dtype=jnp.float32),
+                obs_head=selected_model_obs[0, :10],
+                goal=selected_goal[0],
+                actor_action=actor_action[0],
+                candidate_actions=candidate_actions[0],
+                dense_labels=dense_labels[0],
+                sparse_labels=sparse_labels[0],
+                dense_spread=jnp.max(dense_labels[0]) - jnp.min(dense_labels[0]),
+                sparse_spread=jnp.max(sparse_labels[0]) - jnp.min(sparse_labels[0]),
+                within_var=within_var,
+                between_var=between_var,
+                wb=aux["rank_label_within_between"],
+                first_done_step=first_done,
+                alive_final=alive_final[0],
+                alive_trace=alive_trace[:, 0, :],
+                done_trace=done_trace[:, 0, :],
+                dense_cost_trace=dense_cost_trace[:, 0, :],
+                sparse_cost_trace=sparse_cost_trace[:, 0, :],
+            )
+            return jnp.asarray(0, dtype=jnp.int32)
+
+        _ = jax.lax.cond(
+            train_state.step == 0,
+            print_dump,
+            lambda _: jnp.asarray(0, dtype=jnp.int32),
+            operand=None,
+        )
     return rank_buffer, aux
 
 

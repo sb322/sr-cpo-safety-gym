@@ -79,6 +79,7 @@ COST_RANK_UNIFORM_RANDOM_FRAC="${COST_RANK_UNIFORM_RANDOM_FRAC_OVERRIDE:-0.5}"
 COST_RANK_LABEL_EPSILON="${COST_RANK_LABEL_EPSILON_OVERRIDE:-0.0}"
 COST_RANK_LABEL_KIND="${COST_RANK_LABEL_KIND_OVERRIDE:-dense}"
 COST_RANK_DONE_MODE="${COST_RANK_DONE_MODE_OVERRIDE:-extend}"
+COST_RANK_DEBUG_DUMP="${COST_RANK_DEBUG_DUMP_OVERRIDE:-false}"
 COST_RISK_REPLAY_RATIO="${COST_RISK_REPLAY_RATIO_OVERRIDE:-0.0}"
 COST_RISK_HAZARD_LIDAR_THRESH="${COST_RISK_HAZARD_LIDAR_THRESH_OVERRIDE:-0.5}"
 COST_RISK_MIN_FRACTION_AVAILABLE="${COST_RISK_MIN_FRACTION_AVAILABLE_OVERRIDE:-0.0}"
@@ -137,6 +138,11 @@ if [ -n "$CHECKPOINT_OUTPUT" ]; then
     EVAL_ARGS+=(--checkpoint-output "$CHECKPOINT_OUTPUT")
 fi
 
+RANK_DEBUG_ARGS=()
+if [ "$COST_RANK_DEBUG_DUMP" = "true" ]; then
+    RANK_DEBUG_ARGS+=(--cost-rank-debug-dump)
+fi
+
 echo "===== ENVIRONMENT ====="
 echo "HOST=$(hostname)"
 echo "PYTHON=$("$PYTHON" --version 2>&1)"
@@ -167,6 +173,7 @@ echo "COST_RANK_UNIFORM_RANDOM_FRAC=$COST_RANK_UNIFORM_RANDOM_FRAC"
 echo "COST_RANK_LABEL_EPSILON=$COST_RANK_LABEL_EPSILON"
 echo "COST_RANK_LABEL_KIND=$COST_RANK_LABEL_KIND"
 echo "COST_RANK_DONE_MODE=$COST_RANK_DONE_MODE"
+echo "COST_RANK_DEBUG_DUMP=$COST_RANK_DEBUG_DUMP"
 echo "COST_RISK_REPLAY_RATIO=$COST_RISK_REPLAY_RATIO"
 echo "COST_RISK_HAZARD_LIDAR_THRESH=$COST_RISK_HAZARD_LIDAR_THRESH"
 echo "COST_RISK_MIN_FRACTION_AVAILABLE=$COST_RISK_MIN_FRACTION_AVAILABLE"
@@ -277,6 +284,8 @@ assert "cost_return" in src_replay and "cost_return_gamma" in src_replay, \
     "replay buffer does not expose discounted future cost returns"
 assert "cost_rank_loss_weight: float = 0.0" in src_train and "cost_rank_loss=" in src_train, \
     "rank loss config/logging missing from train.py"
+assert "cost_rank_debug_dump" in src_train and "RANK_DEBUG" in src_train, \
+    "rank debug dump missing from train.py"
 assert "cost_rank_loss_from_predictions" in src_losses and "cost_rank_pair_frac" in src_losses, \
     "rank loss helper/probes missing from losses.py"
 assert "goal_start=config.goal_start" in src_train and "_goal_from_obs" in src_replay, \
@@ -395,6 +404,7 @@ echo "ENTRYPOINT=$ENTRYPOINT"
     --cost-rank-label-epsilon "$COST_RANK_LABEL_EPSILON" \
     --cost-rank-label-kind "$COST_RANK_LABEL_KIND" \
     --cost-rank-done-mode "$COST_RANK_DONE_MODE" \
+    "${RANK_DEBUG_ARGS[@]}" \
     --cost-risk-replay-ratio "$COST_RISK_REPLAY_RATIO" \
     --cost-risk-hazard-lidar-thresh "$COST_RISK_HAZARD_LIDAR_THRESH" \
     --cost-risk-min-fraction-available "$COST_RISK_MIN_FRACTION_AVAILABLE" \

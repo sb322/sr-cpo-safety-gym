@@ -376,6 +376,7 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_rank_loss_weight == 0.0
     assert TrainConfig().cost_rank_horizon == 50
     assert TrainConfig().cost_rank_label_kind == "dense"
+    assert TrainConfig().cost_rank_debug_dump is False
     assert TrainConfig().cost_risk_replay_ratio == 0.0
     assert TrainConfig().eval_counterfactual_action_probes is False
     assert TrainConfig().counterfactual_probe_random_actions == 16
