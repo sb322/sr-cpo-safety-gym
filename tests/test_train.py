@@ -373,6 +373,9 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_limit == 0.0001
     assert TrainConfig().cost_mode == "sparse"
     assert TrainConfig().cost_dense_prox_tau == 0.5
+    assert TrainConfig().cost_rank_loss_weight == 0.0
+    assert TrainConfig().cost_rank_horizon == 50
+    assert TrainConfig().cost_rank_label_kind == "dense"
     assert TrainConfig().cost_risk_replay_ratio == 0.0
     assert TrainConfig().eval_counterfactual_action_probes is False
     assert TrainConfig().counterfactual_probe_random_actions == 16
@@ -530,6 +533,16 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "cost_risky_available_frac": jnp.asarray([0.125]),
         "cost_risky_batch_mean_cost": jnp.asarray([0.08]),
         "cost_uniform_batch_mean_cost": jnp.asarray([0.02]),
+        "cost_rank_loss": jnp.asarray([0.7]),
+        "cost_rank_loss_weight": jnp.asarray([0.1]),
+        "cost_rank_pair_frac": jnp.asarray([0.75]),
+        "cost_rank_batch_frac": jnp.asarray([0.5]),
+        "cost_rank_spearman": jnp.asarray([0.6]),
+        "cost_rank_top1_match": jnp.asarray([0.25]),
+        "rank_label_within_between": jnp.asarray([0.012]),
+        "rank_label_mean_spread": jnp.asarray([0.34]),
+        "rank_label_pair_frac_epoch": jnp.asarray([0.875]),
+        "rank_rollout_alive_frac": jnp.asarray([0.9]),
         "true_action_cost_spread": jnp.asarray([0.05]),
         "true_action_active_cost_spread": jnp.asarray([0.05]),
         "true_action_sparse_cost_spread": jnp.asarray([0.04]),
@@ -711,6 +724,12 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "cost_risky_available_frac=0.125" in text
     assert "cost_risky_batch_mean_cost=0.0800" in text
     assert "cost_uniform_batch_mean_cost=0.0200" in text
+    assert "rank[" in text
+    assert "cost_rank_loss=0.7000" in text
+    assert "cost_rank_pair_frac=0.750" in text
+    assert "cost_rank_spearman=0.600" in text
+    assert "cost_rank_top1_match=0.250" in text
+    assert "rank_label_within_between=1.20e-02" in text
     assert "counterfactual[ true_action_active_cost_spread=5.00e-02" in text
     assert "true_action_sparse_cost_spread=4.00e-02" in text
     assert "true_action_dense_cost_spread=6.00e-02" in text

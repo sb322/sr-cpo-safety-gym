@@ -20,6 +20,16 @@ HEADER_KEYS = (
     "PID_KP",
     "PID_KI",
     "COST_RETURN_LOSS_WEIGHT",
+    "COST_RANK_LOSS_WEIGHT",
+    "COST_RANK_HORIZON",
+    "COST_RANK_NUM_CANDIDATES",
+    "COST_RANK_STATES_PER_EPOCH",
+    "COST_RANK_BUFFER_CAPACITY",
+    "COST_RANK_BATCH_SIZE",
+    "COST_RANK_CANDIDATE_PERTURB_STD",
+    "COST_RANK_UNIFORM_RANDOM_FRAC",
+    "COST_RANK_LABEL_EPSILON",
+    "COST_RANK_LABEL_KIND",
     "COST_MODE",
     "COST_DENSE_PROX_TAU",
 )
@@ -169,6 +179,16 @@ FIELDNAMES = (
     "pid_kp",
     "pid_ki",
     "cost_return_loss_weight",
+    "cost_rank_loss_weight",
+    "cost_rank_horizon",
+    "cost_rank_num_candidates",
+    "cost_rank_states_per_epoch",
+    "cost_rank_buffer_capacity",
+    "cost_rank_batch_size",
+    "cost_rank_candidate_perturb_std",
+    "cost_rank_uniform_random_frac",
+    "cost_rank_label_epsilon",
+    "cost_rank_label_kind",
     "cost_mode",
     "cost_dense_prox_tau",
     "hard_viol",
@@ -227,6 +247,15 @@ FIELDNAMES = (
     "cost_risky_available_frac",
     "cost_risky_batch_mean_cost",
     "cost_uniform_batch_mean_cost",
+    "cost_rank_loss",
+    "cost_rank_pair_frac",
+    "cost_rank_batch_frac",
+    "cost_rank_spearman",
+    "cost_rank_top1_match",
+    "rank_label_within_between",
+    "rank_label_mean_spread",
+    "rank_label_pair_frac_epoch",
+    "rank_rollout_alive_frac",
     *COUNTERFACTUAL_METRIC_KEYS,
     *EVAL_METRIC_KEYS,
 )
@@ -257,6 +286,7 @@ def parse_log(path: Path) -> dict[str, str]:
         elif (
             "action_rank[" in line
             or "cost_replay[" in line
+            or "rank[" in line
             or "counterfactual[" in line
             or "counterfactual_H" in line
         ):
@@ -287,6 +317,20 @@ def parse_log(path: Path) -> dict[str, str]:
         "pid_kp": header.get("PID_KP", ""),
         "pid_ki": header.get("PID_KI", ""),
         "cost_return_loss_weight": header.get("COST_RETURN_LOSS_WEIGHT", ""),
+        "cost_rank_loss_weight": header.get("COST_RANK_LOSS_WEIGHT", ""),
+        "cost_rank_horizon": header.get("COST_RANK_HORIZON", ""),
+        "cost_rank_num_candidates": header.get("COST_RANK_NUM_CANDIDATES", ""),
+        "cost_rank_states_per_epoch": header.get("COST_RANK_STATES_PER_EPOCH", ""),
+        "cost_rank_buffer_capacity": header.get("COST_RANK_BUFFER_CAPACITY", ""),
+        "cost_rank_batch_size": header.get("COST_RANK_BATCH_SIZE", ""),
+        "cost_rank_candidate_perturb_std": header.get(
+            "COST_RANK_CANDIDATE_PERTURB_STD", ""
+        ),
+        "cost_rank_uniform_random_frac": header.get(
+            "COST_RANK_UNIFORM_RANDOM_FRAC", ""
+        ),
+        "cost_rank_label_epsilon": header.get("COST_RANK_LABEL_EPSILON", ""),
+        "cost_rank_label_kind": header.get("COST_RANK_LABEL_KIND", ""),
         "cost_mode": header.get("COST_MODE", ""),
         "cost_dense_prox_tau": header.get("COST_DENSE_PROX_TAU", ""),
         "lambda_tilde": last_metrics.get("λ̃", ""),
@@ -355,6 +399,19 @@ def parse_log(path: Path) -> dict[str, str]:
         "cost_uniform_batch_mean_cost": last_metrics.get(
             "cost_uniform_batch_mean_cost", ""
         ),
+        "cost_rank_loss": last_metrics.get("cost_rank_loss", ""),
+        "cost_rank_pair_frac": last_metrics.get("cost_rank_pair_frac", ""),
+        "cost_rank_batch_frac": last_metrics.get("cost_rank_batch_frac", ""),
+        "cost_rank_spearman": last_metrics.get("cost_rank_spearman", ""),
+        "cost_rank_top1_match": last_metrics.get("cost_rank_top1_match", ""),
+        "rank_label_within_between": last_metrics.get(
+            "rank_label_within_between", ""
+        ),
+        "rank_label_mean_spread": last_metrics.get("rank_label_mean_spread", ""),
+        "rank_label_pair_frac_epoch": last_metrics.get(
+            "rank_label_pair_frac_epoch", ""
+        ),
+        "rank_rollout_alive_frac": last_metrics.get("rank_rollout_alive_frac", ""),
         "cost_target": last_metrics.get("c_target", ""),
     }
     for key in METRIC_KEYS:

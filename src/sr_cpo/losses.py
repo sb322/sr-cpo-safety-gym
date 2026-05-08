@@ -428,6 +428,10 @@ def cost_critic_loss_fn(
     cost_critic: Any,
     gamma_c: float = 0.99,
     cost_return_loss_weight: float = 0.0,
+    rank_batch: Any | None = None,
+    cost_rank_loss_weight: float = 0.0,
+    cost_rank_label_kind: str = "dense",
+    cost_rank_label_epsilon: float = 0.0,
     goal: Array | None = None,
 ) -> tuple[Array, dict[str, Array]]:
     """TD(0) cost-critic loss with Bellman-B c(s_{t+1}) targets."""
@@ -453,11 +457,38 @@ def cost_critic_loss_fn(
         cost_return = target
     cost_return = jax.lax.stop_gradient(cost_return)
     return_loss = 0.5 * jnp.mean(jnp.square(qc_online - cost_return))
-    loss = td_loss + cost_return_loss_weight * return_loss
+    if rank_batch is None:
+        rank_loss = jnp.asarray(0.0, dtype=jnp.float32)
+        rank_pair_frac = jnp.asarray(0.0, dtype=jnp.float32)
+        rank_batch_frac = jnp.asarray(0.0, dtype=jnp.float32)
+        rank_spearman = jnp.asarray(0.0, dtype=jnp.float32)
+        rank_top1 = jnp.asarray(0.0, dtype=jnp.float32)
+    else:
+        rank_loss, rank_aux = cost_rank_loss_from_batch(
+            cost_critic_params,
+            cost_critic,
+            rank_batch,
+            label_kind=cost_rank_label_kind,
+            label_epsilon=cost_rank_label_epsilon,
+        )
+        rank_pair_frac = rank_aux["rank_pair_frac"]
+        rank_batch_frac = rank_aux["rank_batch_frac"]
+        rank_spearman = rank_aux["rank_spearman"]
+        rank_top1 = rank_aux["rank_top1_match"]
+    loss = (
+        td_loss
+        + cost_return_loss_weight * return_loss
+        + cost_rank_loss_weight * rank_loss
+    )
     probes = {
         "cost_critic_loss": loss,
         "cost_critic_td_loss": td_loss,
         "cost_return_loss": return_loss,
+        "cost_rank_loss": rank_loss,
+        "cost_rank_pair_frac": rank_pair_frac,
+        "cost_rank_batch_frac": rank_batch_frac,
+        "cost_rank_spearman": rank_spearman,
+        "cost_rank_top1_match": rank_top1,
         "mean_cost": jnp.mean(cost),
         "mean_qc": jnp.mean(qc_online),
         "mean_target": jnp.mean(target),
@@ -465,6 +496,101 @@ def cost_critic_loss_fn(
         "qc_return_error": jnp.mean(qc_online - cost_return),
     }
     return loss, probes
+
+
+def cost_rank_loss_from_predictions(
+    predictions: Array,
+    labels: Array,
+    valid: Array,
+    *,
+    label_epsilon: float = 0.0,
+) -> tuple[Array, dict[str, Array]]:
+    """Pairwise logistic rank loss within each state's candidate set."""
+
+    predictions = jnp.asarray(predictions, dtype=jnp.float32)
+    labels = jnp.asarray(labels, dtype=jnp.float32)
+    valid = jnp.asarray(valid, dtype=bool)
+    num_candidates = labels.shape[-1]
+    centered = labels - jnp.mean(labels, axis=-1, keepdims=True)
+    label_delta = centered[..., :, None] - centered[..., None, :]
+    pred_delta = predictions[..., :, None] - predictions[..., None, :]
+    upper = jnp.triu(
+        jnp.ones((num_candidates, num_candidates), dtype=bool), k=1
+    )
+    pair_mask = (
+        upper[None, ...]
+        & valid[:, None, None]
+        & (jnp.abs(label_delta) > jnp.asarray(label_epsilon, dtype=jnp.float32))
+    )
+    pair_weight = pair_mask.astype(jnp.float32)
+    pair_loss = jax.nn.softplus(-jnp.sign(label_delta) * pred_delta)
+    denom = jnp.maximum(jnp.sum(pair_weight), 1.0)
+    loss = jnp.sum(pair_weight * pair_loss) / denom
+    possible_pairs = jnp.maximum(
+        jnp.sum(valid.astype(jnp.float32))
+        * (num_candidates * (num_candidates - 1) / 2.0),
+        1.0,
+    )
+    pred_rank = jnp.argsort(jnp.argsort(predictions, axis=-1), axis=-1).astype(
+        jnp.float32
+    )
+    label_rank = jnp.argsort(jnp.argsort(labels, axis=-1), axis=-1).astype(jnp.float32)
+    pred_centered = pred_rank - jnp.mean(pred_rank, axis=-1, keepdims=True)
+    label_centered = label_rank - jnp.mean(label_rank, axis=-1, keepdims=True)
+    corr_num = jnp.sum(pred_centered * label_centered, axis=-1)
+    corr_den = jnp.sqrt(
+        jnp.sum(jnp.square(pred_centered), axis=-1)
+        * jnp.sum(jnp.square(label_centered), axis=-1)
+        + 1e-8
+    )
+    spearman_by_state = corr_num / corr_den
+    top1_by_state = (jnp.argmin(predictions, axis=-1) == jnp.argmin(labels, axis=-1))
+    valid_weight = valid.astype(jnp.float32)
+    valid_denom = jnp.maximum(jnp.sum(valid_weight), 1.0)
+    return loss, {
+        "rank_pair_frac": jnp.sum(pair_weight) / possible_pairs,
+        "rank_batch_frac": jnp.mean(valid.astype(jnp.float32)),
+        "rank_spearman": jnp.sum(spearman_by_state * valid_weight) / valid_denom,
+        "rank_top1_match": jnp.sum(top1_by_state.astype(jnp.float32) * valid_weight)
+        / valid_denom,
+    }
+
+
+def cost_rank_loss_from_batch(
+    cost_critic_params: Params,
+    cost_critic: Any,
+    rank_batch: Any,
+    *,
+    label_kind: str = "dense",
+    label_epsilon: float = 0.0,
+) -> tuple[Array, dict[str, Array]]:
+    """Applies the cost critic to a rank batch and computes pairwise loss."""
+
+    labels = (
+        rank_batch.sparse_labels
+        if label_kind == "sparse"
+        else rank_batch.dense_labels
+    )
+    states = jnp.asarray(rank_batch.states, dtype=jnp.float32)
+    actions = jnp.asarray(rank_batch.candidate_actions, dtype=jnp.float32)
+    goals = jnp.asarray(rank_batch.goals, dtype=jnp.float32)
+    batch_size, num_candidates = actions.shape[:2]
+    flat_states = jnp.repeat(states[:, None, :], num_candidates, axis=1).reshape(
+        batch_size * num_candidates, states.shape[-1]
+    )
+    flat_goals = jnp.repeat(goals[:, None, :], num_candidates, axis=1).reshape(
+        batch_size * num_candidates, goals.shape[-1]
+    )
+    flat_actions = actions.reshape(batch_size * num_candidates, actions.shape[-1])
+    predictions = cost_critic.apply(
+        cost_critic_params, flat_states, flat_actions, flat_goals
+    ).reshape(batch_size, num_candidates)
+    return cost_rank_loss_from_predictions(
+        predictions,
+        labels,
+        rank_batch.valid,
+        label_epsilon=label_epsilon,
+    )
 
 
 def alpha_loss_fn(

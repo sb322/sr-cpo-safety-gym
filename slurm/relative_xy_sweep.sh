@@ -68,6 +68,17 @@ SGD_STEPS="${SGD_STEPS_OVERRIDE:-4}"
 NU_C="${NU_C_OVERRIDE:-0.0003}"
 ENTROPY_PARAM="${ENTROPY_PARAM_OVERRIDE:-0.5}"
 COST_RETURN_LOSS_WEIGHT="${COST_RETURN_LOSS_WEIGHT_OVERRIDE:-0.0}"
+COST_RANK_LOSS_WEIGHT="${COST_RANK_LOSS_WEIGHT_OVERRIDE:-0.0}"
+COST_RANK_HORIZON="${COST_RANK_HORIZON_OVERRIDE:-50}"
+COST_RANK_NUM_CANDIDATES="${COST_RANK_NUM_CANDIDATES_OVERRIDE:-8}"
+COST_RANK_STATES_PER_EPOCH="${COST_RANK_STATES_PER_EPOCH_OVERRIDE:-8}"
+COST_RANK_BUFFER_CAPACITY="${COST_RANK_BUFFER_CAPACITY_OVERRIDE:-256}"
+COST_RANK_BATCH_SIZE="${COST_RANK_BATCH_SIZE_OVERRIDE:-32}"
+COST_RANK_CANDIDATE_PERTURB_STD="${COST_RANK_CANDIDATE_PERTURB_STD_OVERRIDE:-0.5}"
+COST_RANK_UNIFORM_RANDOM_FRAC="${COST_RANK_UNIFORM_RANDOM_FRAC_OVERRIDE:-0.5}"
+COST_RANK_LABEL_EPSILON="${COST_RANK_LABEL_EPSILON_OVERRIDE:-0.0}"
+COST_RANK_LABEL_KIND="${COST_RANK_LABEL_KIND_OVERRIDE:-dense}"
+COST_RANK_DONE_MODE="${COST_RANK_DONE_MODE_OVERRIDE:-extend}"
 COST_RISK_REPLAY_RATIO="${COST_RISK_REPLAY_RATIO_OVERRIDE:-0.0}"
 COST_RISK_HAZARD_LIDAR_THRESH="${COST_RISK_HAZARD_LIDAR_THRESH_OVERRIDE:-0.5}"
 COST_RISK_MIN_FRACTION_AVAILABLE="${COST_RISK_MIN_FRACTION_AVAILABLE_OVERRIDE:-0.0}"
@@ -145,6 +156,17 @@ echo "GOAL_DIM=$GOAL_DIM"
 echo "NU_C=$NU_C"
 echo "ENTROPY_PARAM=$ENTROPY_PARAM"
 echo "COST_RETURN_LOSS_WEIGHT=$COST_RETURN_LOSS_WEIGHT"
+echo "COST_RANK_LOSS_WEIGHT=$COST_RANK_LOSS_WEIGHT"
+echo "COST_RANK_HORIZON=$COST_RANK_HORIZON"
+echo "COST_RANK_NUM_CANDIDATES=$COST_RANK_NUM_CANDIDATES"
+echo "COST_RANK_STATES_PER_EPOCH=$COST_RANK_STATES_PER_EPOCH"
+echo "COST_RANK_BUFFER_CAPACITY=$COST_RANK_BUFFER_CAPACITY"
+echo "COST_RANK_BATCH_SIZE=$COST_RANK_BATCH_SIZE"
+echo "COST_RANK_CANDIDATE_PERTURB_STD=$COST_RANK_CANDIDATE_PERTURB_STD"
+echo "COST_RANK_UNIFORM_RANDOM_FRAC=$COST_RANK_UNIFORM_RANDOM_FRAC"
+echo "COST_RANK_LABEL_EPSILON=$COST_RANK_LABEL_EPSILON"
+echo "COST_RANK_LABEL_KIND=$COST_RANK_LABEL_KIND"
+echo "COST_RANK_DONE_MODE=$COST_RANK_DONE_MODE"
 echo "COST_RISK_REPLAY_RATIO=$COST_RISK_REPLAY_RATIO"
 echo "COST_RISK_HAZARD_LIDAR_THRESH=$COST_RISK_HAZARD_LIDAR_THRESH"
 echo "COST_RISK_MIN_FRACTION_AVAILABLE=$COST_RISK_MIN_FRACTION_AVAILABLE"
@@ -253,6 +275,10 @@ assert "pid_integral_decay" in src_train and "Sdecay=" in src_train, \
     "PID integral decay/release path missing from train.py"
 assert "cost_return" in src_replay and "cost_return_gamma" in src_replay, \
     "replay buffer does not expose discounted future cost returns"
+assert "cost_rank_loss_weight: float = 0.0" in src_train and "cost_rank_loss=" in src_train, \
+    "rank loss config/logging missing from train.py"
+assert "cost_rank_loss_from_predictions" in src_losses and "cost_rank_pair_frac" in src_losses, \
+    "rank loss helper/probes missing from losses.py"
 assert "goal_start=config.goal_start" in src_train and "_goal_from_obs" in src_replay, \
     "hindsight critic goals do not use configured future achieved-goal slice"
 assert "goal_mode_xy" in src_train and "gxy=" in src_train, \
@@ -358,6 +384,17 @@ echo "ENTRYPOINT=$ENTRYPOINT"
     --nu-c "$NU_C" \
     --entropy-param "$ENTROPY_PARAM" \
     --cost-return-loss-weight "$COST_RETURN_LOSS_WEIGHT" \
+    --cost-rank-loss-weight "$COST_RANK_LOSS_WEIGHT" \
+    --cost-rank-horizon "$COST_RANK_HORIZON" \
+    --cost-rank-num-candidates "$COST_RANK_NUM_CANDIDATES" \
+    --cost-rank-states-per-epoch "$COST_RANK_STATES_PER_EPOCH" \
+    --cost-rank-buffer-capacity "$COST_RANK_BUFFER_CAPACITY" \
+    --cost-rank-batch-size "$COST_RANK_BATCH_SIZE" \
+    --cost-rank-candidate-perturb-std "$COST_RANK_CANDIDATE_PERTURB_STD" \
+    --cost-rank-uniform-random-frac "$COST_RANK_UNIFORM_RANDOM_FRAC" \
+    --cost-rank-label-epsilon "$COST_RANK_LABEL_EPSILON" \
+    --cost-rank-label-kind "$COST_RANK_LABEL_KIND" \
+    --cost-rank-done-mode "$COST_RANK_DONE_MODE" \
     --cost-risk-replay-ratio "$COST_RISK_REPLAY_RATIO" \
     --cost-risk-hazard-lidar-thresh "$COST_RISK_HAZARD_LIDAR_THRESH" \
     --cost-risk-min-fraction-available "$COST_RISK_MIN_FRACTION_AVAILABLE" \

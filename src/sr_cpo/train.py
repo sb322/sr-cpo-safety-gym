@@ -37,6 +37,12 @@ from sr_cpo.probes import (
     _grads_have_nan,
     _params_have_nan,
 )
+from sr_cpo.rank_buffer import (
+    RankBuffer,
+    insert_rank_examples,
+    make_rank_buffer,
+    sample_rank_batch,
+)
 from sr_cpo.replay_buffer import (
     ReplayBuffer,
     insert_trajectory,
@@ -104,6 +110,17 @@ class TrainConfig:
     cost_mode: str = "sparse"
     cost_dense_prox_tau: float = 0.5
     cost_return_loss_weight: float = 0.0
+    cost_rank_loss_weight: float = 0.0
+    cost_rank_horizon: int = 50
+    cost_rank_num_candidates: int = 8
+    cost_rank_states_per_epoch: int = 8
+    cost_rank_buffer_capacity: int = 256
+    cost_rank_batch_size: int = 32
+    cost_rank_candidate_perturb_std: float = 0.5
+    cost_rank_uniform_random_frac: float = 0.5
+    cost_rank_label_epsilon: float = 0.0
+    cost_rank_label_kind: str = "dense"
+    cost_rank_done_mode: str = "extend"
     cost_risk_replay_ratio: float = 0.0
     cost_risk_hazard_lidar_thresh: float = 0.5
     cost_risk_min_fraction_available: float = 0.0
@@ -155,6 +172,7 @@ class TrainState:
     step: Array
     env_state: Any
     replay: ReplayBuffer
+    rank_buffer: RankBuffer
     actor_params: Any
     actor_opt_state: Any
     critic_params: Any
@@ -315,6 +333,189 @@ def _collect_trajectory(
     if objects.env_adapter is not None:
         return _collect_real_trajectory(train_state, objects, config)
     return _collect_toy_trajectory(train_state, objects, config)
+
+
+def _take_env_state(env_state: Any, indices: Array, batch_size: int) -> Any:
+    def take_leaf(leaf: Any) -> Any:
+        if (
+            hasattr(leaf, "shape")
+            and len(leaf.shape) > 0
+            and leaf.shape[0] == batch_size
+        ):
+            return leaf[indices]
+        return leaf
+
+    return jax.tree_util.tree_map(take_leaf, env_state)
+
+
+def _repeat_env_state(env_state: Any, repeats: int, batch_size: int) -> Any:
+    def repeat_leaf(leaf: Any) -> Any:
+        if (
+            hasattr(leaf, "shape")
+            and len(leaf.shape) > 0
+            and leaf.shape[0] == batch_size
+        ):
+            return jnp.repeat(leaf, repeats, axis=0)
+        return leaf
+
+    return jax.tree_util.tree_map(repeat_leaf, env_state)
+
+
+def _deterministic_actor_action(
+    actor: Actor,
+    actor_params: Any,
+    observation: Array,
+    goal: Array,
+) -> Array:
+    mean, _ = actor.apply(actor_params, observation, goal)
+    return jnp.tanh(mean)
+
+
+def _rank_candidate_actions(
+    actor_action: Array,
+    key: Array,
+    config: TrainConfig,
+    action_dim: int,
+) -> Array:
+    num_candidates = config.cost_rank_num_candidates
+    num_uniform = int(round(num_candidates * config.cost_rank_uniform_random_frac))
+    num_uniform = min(max(num_uniform, 0), num_candidates)
+    num_perturb = num_candidates - num_uniform
+    perturb_key, uniform_key = jax.random.split(key)
+    perturb = (
+        actor_action[:, None, :]
+        + config.cost_rank_candidate_perturb_std
+        * jax.random.normal(
+            perturb_key,
+            (actor_action.shape[0], num_perturb, action_dim),
+            dtype=jnp.float32,
+        )
+    )
+    uniform = jax.random.uniform(
+        uniform_key,
+        (actor_action.shape[0], num_uniform, action_dim),
+        minval=-1.0,
+        maxval=1.0,
+        dtype=jnp.float32,
+    )
+    actions = jnp.concatenate((perturb, uniform), axis=1)
+    return jnp.clip(actions, -1.0, 1.0)
+
+
+def _collect_rank_labels(
+    train_state: TrainState,
+    objects: TrainingObjects,
+    config: TrainConfig,
+    env_state: Any,
+    key: Array,
+) -> tuple[RankBuffer, Mapping[str, Array]]:
+    env_adapter = objects.env_adapter
+    if env_adapter is None:
+        raise ValueError("rank-label collection requires objects.env_adapter")
+
+    select_key, action_key = jax.random.split(key)
+    state_indices = jax.random.randint(
+        select_key,
+        (config.cost_rank_states_per_epoch,),
+        0,
+        config.num_envs,
+    )
+    selected_env_state = _take_env_state(env_state, state_indices, config.num_envs)
+    selected_obs = _real_state_observation(env_adapter, selected_env_state)
+    selected_model_obs = _mask_goal_in_state(selected_obs, config)
+    selected_goal = _real_rollout_goal(env_adapter, selected_env_state, config)
+    actor_action = _deterministic_actor_action(
+        objects.actor,
+        train_state.actor_params,
+        selected_model_obs,
+        selected_goal,
+    )
+    candidate_actions = _rank_candidate_actions(
+        actor_action, action_key, config, objects.action_dim
+    )
+    num_states = config.cost_rank_states_per_epoch
+    num_candidates = config.cost_rank_num_candidates
+    flat_actions = candidate_actions.reshape(
+        num_states * num_candidates, objects.action_dim
+    )
+    flat_env_state = _repeat_env_state(selected_env_state, num_candidates, num_states)
+
+    def rank_step(
+        carry: tuple[Any, Array, Array, Array], step_idx: Array
+    ) -> tuple[tuple[Any, Array, Array, Array], None]:
+        step_env_state, dense_return, sparse_return, alive = carry
+        obs = _real_state_observation(env_adapter, step_env_state)
+        goal = _real_rollout_goal(env_adapter, step_env_state, config)
+        follow_action = _deterministic_actor_action(
+            objects.actor,
+            train_state.actor_params,
+            _mask_goal_in_state(obs, config),
+            goal,
+        )
+        action = jax.lax.cond(
+            step_idx == 0,
+            lambda _: flat_actions,
+            lambda _: follow_action,
+            operand=None,
+        )
+        next_env_state, transition = env_adapter.step(step_env_state, action)
+        dense_cost = _transition_dense_cost(transition.extras).reshape(
+            num_states, num_candidates
+        )
+        sparse_cost = _transition_sparse_cost(transition.extras).reshape(
+            num_states, num_candidates
+        )
+        gamma_t = jnp.power(jnp.asarray(config.gamma_c, dtype=jnp.float32), step_idx)
+        dense_return = dense_return + alive * gamma_t * dense_cost
+        sparse_return = sparse_return + alive * gamma_t * sparse_cost
+        done = (1.0 - jnp.asarray(transition.discount, dtype=jnp.float32)).reshape(
+            num_states, num_candidates
+        )
+        alive = alive * (1.0 - done)
+        return (next_env_state, dense_return, sparse_return, alive), None
+
+    zeros = jnp.zeros((num_states, num_candidates), dtype=jnp.float32)
+    alive = jnp.ones((num_states, num_candidates), dtype=jnp.float32)
+    (_, dense_labels, sparse_labels, alive_final), _ = jax.lax.scan(
+        rank_step,
+        (flat_env_state, zeros, zeros, alive),
+        jnp.arange(config.cost_rank_horizon),
+    )
+    rank_buffer = insert_rank_examples(
+        train_state.rank_buffer,
+        states=selected_model_obs,
+        candidate_actions=candidate_actions,
+        goals=selected_goal,
+        dense_labels=dense_labels,
+        sparse_labels=sparse_labels,
+    )
+    label = dense_labels if config.cost_rank_label_kind == "dense" else sparse_labels
+    centered = label - jnp.mean(label, axis=-1, keepdims=True)
+    within_var = jnp.mean(jnp.var(label, axis=-1))
+    between_var = jnp.var(jnp.mean(label, axis=-1))
+    upper_pairs = jnp.triu(
+        jnp.ones((config.cost_rank_num_candidates, config.cost_rank_num_candidates)),
+        k=1,
+    )
+    label_pair_mask = (
+        jnp.abs(centered[:, :, None] - centered[:, None, :])
+        > config.cost_rank_label_epsilon
+    ).astype(jnp.float32) * upper_pairs[None, :, :]
+    aux = {
+        "rank_label_within_between": within_var / jnp.maximum(between_var, 1e-8),
+        "rank_label_mean_spread": jnp.mean(
+            jnp.max(label, axis=-1) - jnp.min(label, axis=-1)
+        ),
+        "rank_label_pair_frac_epoch": jnp.sum(label_pair_mask) / jnp.maximum(
+            config.cost_rank_states_per_epoch
+            * config.cost_rank_num_candidates
+            * (config.cost_rank_num_candidates - 1)
+            / 2.0,
+            1.0,
+        ),
+        "rank_rollout_alive_frac": jnp.mean(alive_final),
+    }
+    return rank_buffer, aux
 
 
 def _mean_transition_extra(
@@ -1472,6 +1673,10 @@ def _collect_toy_trajectory(
         "cost_zero_action": jnp.asarray(0.0, dtype=jnp.float32),
         "cost_neg_action": jnp.asarray(0.0, dtype=jnp.float32),
         "cost_action_minus_zero": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_label_within_between": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_label_mean_spread": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_label_pair_frac_epoch": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
     }
     next_state = train_state.replace(
         key=key,
@@ -1488,7 +1693,7 @@ def _collect_real_trajectory(
     objects: TrainingObjects,
     config: TrainConfig,
 ) -> tuple[TrainState, Mapping[str, Array]]:
-    key, scan_key = jax.random.split(train_state.key)
+    key, scan_key, rank_key = jax.random.split(train_state.key, 3)
     env_adapter = objects.env_adapter
     if env_adapter is None:
         raise ValueError("real-env collection requires objects.env_adapter")
@@ -1635,10 +1840,28 @@ def _collect_real_trajectory(
         "dense_cost_neg_action": jnp.mean(dense_cost_neg_action),
         "dense_cost_action_minus_zero": jnp.mean(dense_cost - dense_cost_zero_action),
     }
+    rank_buffer = train_state.rank_buffer
+    if config.cost_rank_loss_weight > 0.0:
+        rank_buffer, rank_aux = _collect_rank_labels(
+            train_state,
+            objects,
+            config,
+            next_env_state,
+            rank_key,
+        )
+    else:
+        rank_aux = {
+            "rank_label_within_between": jnp.asarray(0.0, dtype=jnp.float32),
+            "rank_label_mean_spread": jnp.asarray(0.0, dtype=jnp.float32),
+            "rank_label_pair_frac_epoch": jnp.asarray(0.0, dtype=jnp.float32),
+            "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
+        }
+    metrics.update(rank_aux)
     next_state = train_state.replace(
         key=key,
         env_state=next_env_state,
         replay=replay,
+        rank_buffer=rank_buffer,
         step=train_state.step + config.num_envs * config.unroll_length,
     )
     return next_state, metrics
@@ -1704,11 +1927,12 @@ def _sgd_step(
         key,
         sample_key,
         cost_sample_key,
+        rank_sample_key,
         actor_key,
         cost_key,
         alpha_key,
         dual_key,
-    ) = jax.random.split(train_state.key, 7)
+    ) = jax.random.split(train_state.key, 8)
     batch = sample_hindsight_transitions(
         train_state.replay,
         sample_key,
@@ -1755,6 +1979,15 @@ def _sgd_step(
             "cost_risky_batch_mean_cost": jnp.asarray(0.0, dtype=jnp.float32),
             "cost_uniform_batch_mean_cost": jnp.mean(batch_cost),
         }
+    rank_batch = (
+        sample_rank_batch(
+            train_state.rank_buffer,
+            rank_sample_key,
+            batch_size=config.cost_rank_batch_size,
+        )
+        if config.cost_rank_loss_weight > 0.0
+        else None
+    )
 
     def critic_objective(params: Any) -> tuple[Array, dict[str, Array]]:
         return critic_loss_fn(
@@ -1813,6 +2046,10 @@ def _sgd_step(
             cost_critic=objects.cost_critic,
             gamma_c=config.gamma_c,
             cost_return_loss_weight=config.cost_return_loss_weight,
+            rank_batch=rank_batch,
+            cost_rank_loss_weight=config.cost_rank_loss_weight,
+            cost_rank_label_kind=config.cost_rank_label_kind,
+            cost_rank_label_epsilon=config.cost_rank_label_epsilon,
         )
 
     (cc_loss, cc_aux), cc_grads = jax.value_and_grad(
@@ -1895,6 +2132,14 @@ def _sgd_step(
         "cc_loss": cc_loss,
         "cc_td_loss": cc_aux["cost_critic_td_loss"],
         "cc_return_loss": cc_aux["cost_return_loss"],
+        "cost_rank_loss": cc_aux["cost_rank_loss"],
+        "cost_rank_pair_frac": cc_aux["cost_rank_pair_frac"],
+        "cost_rank_batch_frac": cc_aux["cost_rank_batch_frac"],
+        "cost_rank_spearman": cc_aux["cost_rank_spearman"],
+        "cost_rank_top1_match": cc_aux["cost_rank_top1_match"],
+        "cost_rank_loss_weight": jnp.asarray(
+            config.cost_rank_loss_weight, dtype=jnp.float32
+        ),
         "cost_risk_replay_ratio_actual": cost_risk_aux[
             "cost_risk_replay_ratio_actual"
         ],
@@ -2096,6 +2341,14 @@ def make_training_epoch(
         metrics["cost_zero_action"] = collect_metrics["cost_zero_action"]
         metrics["cost_neg_action"] = collect_metrics["cost_neg_action"]
         metrics["cost_action_minus_zero"] = collect_metrics["cost_action_minus_zero"]
+        metrics["rank_label_within_between"] = collect_metrics[
+            "rank_label_within_between"
+        ]
+        metrics["rank_label_mean_spread"] = collect_metrics["rank_label_mean_spread"]
+        metrics["rank_label_pair_frac_epoch"] = collect_metrics[
+            "rank_label_pair_frac_epoch"
+        ]
+        metrics["rank_rollout_alive_frac"] = collect_metrics["rank_rollout_alive_frac"]
         return state, metrics
 
     @jax.jit
@@ -2122,6 +2375,28 @@ def initialize_training(
         raise ValueError("cost_mode must be 'sparse' or 'dense_proximity'")
     if config.cost_dense_prox_tau <= 0.0:
         raise ValueError("cost_dense_prox_tau must be positive")
+    if config.cost_rank_loss_weight < 0.0:
+        raise ValueError("cost_rank_loss_weight must be non-negative")
+    if config.cost_rank_horizon <= 0:
+        raise ValueError("cost_rank_horizon must be positive")
+    if config.cost_rank_num_candidates < 2:
+        raise ValueError("cost_rank_num_candidates must be at least 2")
+    if config.cost_rank_states_per_epoch <= 0:
+        raise ValueError("cost_rank_states_per_epoch must be positive")
+    if config.cost_rank_buffer_capacity <= 0:
+        raise ValueError("cost_rank_buffer_capacity must be positive")
+    if config.cost_rank_batch_size <= 0:
+        raise ValueError("cost_rank_batch_size must be positive")
+    if not 0.0 <= config.cost_rank_uniform_random_frac <= 1.0:
+        raise ValueError("cost_rank_uniform_random_frac must be in [0, 1]")
+    if config.cost_rank_candidate_perturb_std < 0.0:
+        raise ValueError("cost_rank_candidate_perturb_std must be non-negative")
+    if config.cost_rank_label_epsilon < 0.0:
+        raise ValueError("cost_rank_label_epsilon must be non-negative")
+    if config.cost_rank_label_kind not in {"dense", "sparse"}:
+        raise ValueError("cost_rank_label_kind must be 'dense' or 'sparse'")
+    if config.cost_rank_done_mode not in {"extend"}:
+        raise ValueError("cost_rank_done_mode must be 'extend'")
     if not 0.0 <= config.cost_risk_replay_ratio <= 1.0:
         raise ValueError("cost_risk_replay_ratio must be in [0, 1]")
     if config.cost_risk_hazard_lidar_thresh <= 0.0:
@@ -2217,11 +2492,19 @@ def initialize_training(
         observation_dim=runtime_observation_dim,
         action_dim=runtime_action_dim,
     )
+    rank_buffer = make_rank_buffer(
+        capacity=config.cost_rank_buffer_capacity,
+        state_dim=runtime_observation_dim,
+        action_dim=runtime_action_dim,
+        goal_dim=config.goal_dim,
+        num_candidates=config.cost_rank_num_candidates,
+    )
     state = TrainState(
         key=key,
         step=jnp.asarray(0, dtype=jnp.int32),
         env_state=env_state,
         replay=replay,
+        rank_buffer=rank_buffer,
         actor_params=actor_params,
         actor_opt_state=actor_optimizer.init(actor_params),
         critic_params=critic_params,
@@ -2654,6 +2937,29 @@ def format_epoch_metrics(
                 f"{_mean_float(metrics, 'cost_risky_batch_mean_cost'):.4f} "
                 f"cost_uniform_batch_mean_cost="
                 f"{_mean_float(metrics, 'cost_uniform_batch_mean_cost'):.4f}]"
+            ),
+            (
+                "         "
+                f"rank[ cost_rank_loss="
+                f"{_mean_float(metrics, 'cost_rank_loss'):.4f} "
+                f"cost_rank_loss_weight="
+                f"{_mean_float(metrics, 'cost_rank_loss_weight'):.2e} "
+                f"cost_rank_pair_frac="
+                f"{_mean_float(metrics, 'cost_rank_pair_frac'):.3f} "
+                f"cost_rank_batch_frac="
+                f"{_mean_float(metrics, 'cost_rank_batch_frac'):.3f} "
+                f"cost_rank_spearman="
+                f"{_mean_float(metrics, 'cost_rank_spearman'):.3f} "
+                f"cost_rank_top1_match="
+                f"{_mean_float(metrics, 'cost_rank_top1_match'):.3f} "
+                f"rank_label_within_between="
+                f"{_mean_float(metrics, 'rank_label_within_between'):.2e} "
+                f"rank_label_mean_spread="
+                f"{_mean_float(metrics, 'rank_label_mean_spread'):.2e} "
+                f"rank_label_pair_frac_epoch="
+                f"{_mean_float(metrics, 'rank_label_pair_frac_epoch'):.3f} "
+                f"rank_rollout_alive_frac="
+                f"{_mean_float(metrics, 'rank_rollout_alive_frac'):.3f}]"
             ),
             *(
                 [counterfactual_line]

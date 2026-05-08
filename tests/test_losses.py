@@ -9,10 +9,12 @@ from sr_cpo.losses import (
     alpha_loss_fn,
     contrastive_logits,
     cost_critic_loss_fn,
+    cost_rank_loss_from_predictions,
     critic_loss_fn,
     sample_tanh_gaussian,
 )
 from sr_cpo.networks import Actor, CostCritic, GEncoder, SAEncoder
+from sr_cpo.rank_buffer import RankBatch
 
 
 def _assert_finite_tree(tree: object) -> None:
@@ -461,6 +463,83 @@ def test_cost_critic_loss_can_use_cost_return_auxiliary_target() -> None:
     assert bool(jnp.isfinite(loss))
     assert bool(jnp.isfinite(probes["cost_return_loss"]))
     assert bool(jnp.allclose(probes["mean_cost_return"], 0.4375))
+
+
+def test_cost_rank_loss_prefers_matching_order() -> None:
+    labels = jnp.asarray([[0.0, 1.0, 2.0, 3.0]], dtype=jnp.float32)
+    valid = jnp.asarray([True])
+    matching = jnp.asarray([[0.0, 1.0, 2.0, 3.0]], dtype=jnp.float32)
+    reversed_preds = jnp.asarray([[3.0, 2.0, 1.0, 0.0]], dtype=jnp.float32)
+
+    good_loss, good_aux = cost_rank_loss_from_predictions(matching, labels, valid)
+    bad_loss, _ = cost_rank_loss_from_predictions(reversed_preds, labels, valid)
+
+    assert float(good_loss) < float(bad_loss)
+    assert bool(jnp.allclose(good_aux["rank_pair_frac"], 1.0))
+    assert bool(jnp.allclose(good_aux["rank_batch_frac"], 1.0))
+
+
+def test_cost_rank_loss_ignores_pairs_below_epsilon() -> None:
+    labels = jnp.asarray([[0.0, 0.01, 0.02]], dtype=jnp.float32)
+    predictions = jnp.asarray([[0.0, 1.0, 2.0]], dtype=jnp.float32)
+    valid = jnp.asarray([True])
+
+    loss, aux = cost_rank_loss_from_predictions(
+        predictions,
+        labels,
+        valid,
+        label_epsilon=0.1,
+    )
+
+    assert bool(jnp.allclose(loss, 0.0))
+    assert bool(jnp.allclose(aux["rank_pair_frac"], 0.0))
+
+
+def test_cost_rank_loss_zero_weight_leaves_total_loss_unchanged() -> None:
+    (
+        actor_params,
+        _,
+        cost_critic_params,
+        transition,
+        actor,
+        _,
+        _,
+        cost_critic,
+    ) = _actor_setup()
+    rank_batch = RankBatch(
+        states=transition.observation[:2],
+        candidate_actions=jnp.stack(
+            [transition.action[:2], -transition.action[:2]], axis=1
+        ),
+        goals=transition.extras["goal"][:2],
+        dense_labels=jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.float32),
+        sparse_labels=jnp.asarray([[0.0, 0.0], [1.0, 0.0]], dtype=jnp.float32),
+        valid=jnp.asarray([True, True]),
+    )
+
+    base_loss, _ = cost_critic_loss_fn(
+        cost_critic_params,
+        cost_critic_params,
+        actor_params,
+        transition,
+        jax.random.PRNGKey(17),
+        actor=actor,
+        cost_critic=cost_critic,
+    )
+    rank_loss, probes = cost_critic_loss_fn(
+        cost_critic_params,
+        cost_critic_params,
+        actor_params,
+        transition,
+        jax.random.PRNGKey(17),
+        actor=actor,
+        cost_critic=cost_critic,
+        rank_batch=rank_batch,
+        cost_rank_loss_weight=0.0,
+    )
+
+    assert bool(jnp.allclose(rank_loss, base_loss))
+    assert float(probes["cost_rank_loss"]) > 0.0
 
 
 def test_alpha_loss_forward_and_grad_finite() -> None:
