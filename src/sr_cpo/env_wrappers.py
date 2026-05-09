@@ -162,7 +162,8 @@ class SafeLearningGoToGoalAdapter:
             base_env, episode_length=episode_length, action_repeat=action_repeat
         )
         self.base_env = base_env
-        self.env = training.VmapWrapper(episodic_env, batch_size=num_envs)
+        vector_env = training.VmapWrapper(episodic_env, batch_size=num_envs)
+        self.env = training.AutoResetWrapper(vector_env)
         self.num_envs = num_envs
         self.episode_length = episode_length
         self.goal_mode = goal_mode
