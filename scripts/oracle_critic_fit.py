@@ -114,6 +114,8 @@ class OracleFitConfig:
     fit_bootstrap_samples: int = 200
     action_effect_eps: float = 1e-6
     done_mode: str = "extend"
+    load_rank_dump: str = ""
+    rank_dump_oracle_seeds: int = 5
     oracle_results_npz: str = ""
     include_synthetic_action_norm: bool = True
     output_csv: str = "figures/data/oracle_critic_fit.csv"
@@ -736,8 +738,111 @@ def _save_per_state_results(path: Path, records: list[tuple[str, dict[str, Array
         np.savez(path, **payload)
 
 
+def _load_rank_dump_arrays(path: Path) -> dict[str, Array]:
+    data = np.load(path)
+    required = {"states", "candidate_actions", "goals", "labels_dense_h50", "valid_mask"}
+    missing = required - set(data.files)
+    if missing:
+        raise ValueError(f"rank dump missing required arrays: {sorted(missing)}")
+    valid = np.asarray(data["valid_mask"], dtype=bool)
+    if not np.any(valid):
+        raise ValueError("rank dump has no valid rows")
+    states = np.asarray(data["states"], dtype=np.float32)[valid]
+    actions = np.asarray(data["candidate_actions"], dtype=np.float32)[valid]
+    goals = np.asarray(data["goals"], dtype=np.float32)[valid]
+    labels = np.asarray(data["labels_dense_h50"], dtype=np.float32)[valid]
+    if states.shape[0] < 2:
+        raise ValueError("rank dump needs at least two valid rows")
+    return {
+        "states": jnp.asarray(states),
+        "actions": jnp.asarray(actions),
+        "goals": jnp.asarray(goals),
+        "labels": jnp.asarray(labels),
+        "horizon": jnp.asarray(
+            int(np.asarray(data["cost_rank_horizon"])) if "cost_rank_horizon" in data else 50,
+            dtype=jnp.int32,
+        ),
+    }
+
+
+def _oracle_on_rank_dump(config: OracleFitConfig) -> int:
+    dump_path = Path(config.load_rank_dump)
+    dump = _load_rank_dump_arrays(dump_path)
+    states = dump["states"]
+    actions = dump["actions"]
+    goals = dump["goals"]
+    labels = _transform_labels(dump["labels"], "centered")
+    actor_actions = actions[:, 0, :]
+    horizon = int(jnp.asarray(dump["horizon"]))
+    per_state_records: list[tuple[str, dict[str, Array]]] = []
+    rows: list[dict[str, Any]] = []
+    spearman_arrays: list[np.ndarray] = []
+    top1_arrays: list[np.ndarray] = []
+    seeds = max(1, config.rank_dump_oracle_seeds)
+    for seed_offset in range(seeds):
+        seed = config.seed + seed_offset
+        fit_metrics, per_state = _fit_oracle_critic(
+            config=config,
+            states=states,
+            goals=goals,
+            actions=actions,
+            labels=labels,
+            actor_actions=actor_actions,
+            fit_loss="rank",
+            fit_goal_mode="normal",
+            key=jax.random.PRNGKey(seed),
+        )
+        rows.append(
+            _float_dict(
+                {
+                    "seed": seed,
+                    "kind": "oracle_on_rank_buffer",
+                    "label": "dense",
+                    "label_transform": "centered",
+                    "fit_loss": "rank",
+                    "fit_goal_mode": "normal",
+                    "horizon": horizon,
+                    "n_states": int(states.shape[0]),
+                    "fit_steps": config.fit_steps,
+                    "fit_batch_size": config.fit_batch_size,
+                    "fit_learning_rate": config.fit_learning_rate,
+                    **fit_metrics,
+                }
+            )
+        )
+        record_name = f"rank_buffer_seed{seed}"
+        per_state_records.append((record_name, per_state))
+        spearman_arrays.append(np.asarray(per_state["spearman"]))
+        top1_arrays.append(np.asarray(per_state["top1"]))
+    all_spearman = np.concatenate(spearman_arrays)
+    all_top1 = np.concatenate(top1_arrays)
+    spear_mean, spear_low, spear_high = bootstrap_mean_ci_np(
+        all_spearman, num_samples=max(1, config.fit_bootstrap_samples), seed=config.seed
+    )
+    top1_mean, _, _ = bootstrap_mean_ci_np(
+        all_top1, num_samples=max(1, config.fit_bootstrap_samples), seed=config.seed + 1
+    )
+    output = Path(config.output_csv)
+    _write_rows(output, rows)
+    if per_state_records:
+        results_path = _results_npz_path(config)
+        _save_per_state_results(results_path, per_state_records)
+        print(f"wrote {results_path}")
+    print(f"wrote {output}")
+    print(
+        "ORACLE_ON_RANK_BUFFER "
+        f"spearman_mean={spear_mean:.6g} "
+        f"spearman_ci=[{spear_low:.6g},{spear_high:.6g}] "
+        f"top1_mean={top1_mean:.6g} "
+        f"n_states={states.shape[0]}"
+    )
+    return 0
+
+
 def main() -> int:
     config = tyro.cli(OracleFitConfig)
+    if config.load_rank_dump:
+        return _oracle_on_rank_dump(config)
     if config.done_mode not in {"extend", "filter"}:
         raise ValueError("done_mode must be 'extend' or 'filter'")
     horizons = _parse_csv_ints(config.horizons)
