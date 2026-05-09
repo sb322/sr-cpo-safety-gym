@@ -27,6 +27,7 @@ HEADER_KEYS = (
     "COST_RANK_BUFFER_CAPACITY",
     "COST_RANK_BATCH_SIZE",
     "COST_RANK_CANDIDATE_PERTURB_STD",
+    "COST_RANK_UNIFORM_ANCHOR_COUNT",
     "COST_RANK_UNIFORM_RANDOM_FRAC",
     "COST_RANK_LABEL_EPSILON",
     "COST_RANK_MIN_LABEL_SPREAD",
@@ -187,6 +188,7 @@ FIELDNAMES = (
     "cost_rank_buffer_capacity",
     "cost_rank_batch_size",
     "cost_rank_candidate_perturb_std",
+    "cost_rank_uniform_anchor_count",
     "cost_rank_uniform_random_frac",
     "cost_rank_label_epsilon",
     "cost_rank_min_label_spread",
@@ -331,6 +333,9 @@ def parse_log(path: Path) -> dict[str, str]:
         "cost_rank_batch_size": header.get("COST_RANK_BATCH_SIZE", ""),
         "cost_rank_candidate_perturb_std": header.get(
             "COST_RANK_CANDIDATE_PERTURB_STD", ""
+        ),
+        "cost_rank_uniform_anchor_count": header.get(
+            "COST_RANK_UNIFORM_ANCHOR_COUNT", ""
         ),
         "cost_rank_uniform_random_frac": header.get(
             "COST_RANK_UNIFORM_RANDOM_FRAC", ""

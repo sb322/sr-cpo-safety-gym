@@ -140,6 +140,55 @@ def test_safe_learning_go_to_goal_adapter_step_uses_next_info_cost() -> None:
     assert bool(jnp.allclose(transition.extras["goal_reached"], 1.0))
 
 
+def test_safe_learning_go_to_goal_adapter_auto_resets_done_states() -> None:
+    adapter = SafeLearningGoToGoalAdapter(
+        env=FakeGoToGoal(),
+        num_envs=4,
+        episode_length=2,
+    )
+    state, _ = adapter.reset(jax.random.PRNGKey(0))
+    action = jnp.zeros((4, adapter.action_size), dtype=jnp.float32)
+    observed_steps = []
+    observed_done = []
+
+    for _ in range(5):
+        state, _ = adapter.step(state, action)
+        observed_steps.append(state.info["steps"])
+        observed_done.append(state.done)
+
+    steps = jnp.stack(observed_steps)
+    done = jnp.stack(observed_done)
+
+    assert bool(jnp.all(steps <= adapter.episode_length))
+    assert bool(jnp.any(done > 0.5))
+    assert bool(jnp.any(steps == 1))
+
+
+def test_auto_reset_preserves_terminal_transition_extras() -> None:
+    adapter = SafeLearningGoToGoalAdapter(
+        env=FakeGoToGoal(),
+        num_envs=4,
+        episode_length=2,
+    )
+    state, _ = adapter.reset(jax.random.PRNGKey(0))
+    initial_obs = state.obs
+    action = jnp.ones((4, adapter.action_size), dtype=jnp.float32)
+
+    state, first_transition = adapter.step(state, action)
+    state, terminal_transition = adapter.step(state, action)
+
+    assert bool(jnp.all(first_transition.discount == 1.0))
+    assert bool(jnp.all(terminal_transition.discount == 0.0))
+    assert bool(jnp.allclose(state.obs, initial_obs))
+    assert not bool(jnp.allclose(terminal_transition.extras["next_state"], state.obs))
+    assert bool(
+        jnp.allclose(
+            terminal_transition.extras["cost"],
+            FakeGoToGoal.documented_step_cost + 0.2,
+        )
+    )
+
+
 def test_safe_learning_go_to_goal_adapter_can_probe_counterfactual_costs() -> None:
     num_envs = 8
     fake_env = FakeGoToGoal()

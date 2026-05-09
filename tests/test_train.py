@@ -4,6 +4,8 @@ from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 from sr_cpo.env_wrappers import Transition
 from sr_cpo.train import (
@@ -11,6 +13,7 @@ from sr_cpo.train import (
     TrainConfig,
     _flatten_env_state_history,
     _mask_goal_in_state,
+    _rank_candidate_actions,
     _rank_state_history_mask,
     format_epoch_metrics,
     initialize_training,
@@ -390,6 +393,9 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_rank_loss_weight == 0.0
     assert TrainConfig().cost_rank_horizon == 50
     assert TrainConfig().cost_rank_label_kind == "dense"
+    assert TrainConfig().cost_rank_candidate_perturb_std == 0.075
+    assert TrainConfig().cost_rank_uniform_anchor_count == 2
+    assert TrainConfig().cost_rank_uniform_random_frac == -1.0
     assert TrainConfig().cost_rank_min_label_spread == 1e-4
     assert TrainConfig().cost_rank_debug_dump is False
     assert TrainConfig().cost_risk_replay_ratio == 0.0
@@ -418,9 +424,45 @@ def test_rank_state_history_mask_requires_full_alive_window() -> None:
     assert mask.tolist() == [
         [True, False],
         [True, False],
-        [False, True],
+        [False, False],
         [False, False],
     ]
+
+
+def test_rank_state_history_mask_counts_unroll_lookahead() -> None:
+    discounts = jnp.ones((62, 1), dtype=jnp.float32)
+
+    mask = _rank_state_history_mask(discounts, horizon=20)
+
+    assert float(jnp.mean(mask.astype(jnp.float32))) == pytest.approx(42 / 62)
+
+
+def test_rank_state_history_mask_splits_at_done() -> None:
+    discounts = jnp.ones((62, 1), dtype=jnp.float32)
+    discounts = discounts.at[30, 0].set(0.0)
+
+    mask = _rank_state_history_mask(discounts, horizon=20)
+
+    assert float(jnp.mean(mask.astype(jnp.float32))) == pytest.approx(22 / 62)
+
+
+def test_rank_candidate_actions_use_local_candidates_and_uniform_anchors() -> None:
+    actor_action = jnp.zeros((3, 2), dtype=jnp.float32)
+    config = replace(
+        TrainConfig(),
+        cost_rank_num_candidates=8,
+        cost_rank_candidate_perturb_std=0.0,
+        cost_rank_uniform_anchor_count=2,
+        cost_rank_uniform_random_frac=-1.0,
+    )
+
+    actions = _rank_candidate_actions(
+        actor_action, jax.random.PRNGKey(0), config, action_dim=2
+    )
+
+    assert actions.shape == (3, 8, 2)
+    assert bool(jnp.all(actions[:, :6, :] == 0.0))
+    assert bool(jnp.any(actions[:, 6:, :] != 0.0))
 
 
 def test_run_training_prints_required_probe_sections() -> None:
@@ -439,6 +481,43 @@ def test_run_training_prints_required_probe_sections() -> None:
     assert "eval_min_goal_dist_initial_goal=" in output
     assert "eval_time_at_goal_resampled=" in output
     assert "eval_final_goal_dist_resampled=" in output
+
+
+def test_rank_buffer_dump_hook_writes_npz(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "rank_dump.npz"
+    monkeypatch.setenv("SR_CPO_DUMP_RANK_BUFFER_AT_EPOCH", "1")
+    monkeypatch.setenv("SR_CPO_DUMP_RANK_BUFFER_PATH", str(output))
+
+    run_training(_tiny_config(), print_fn=lambda _: None)
+
+    data = np.load(output)
+    assert {
+        "states",
+        "candidate_actions",
+        "goals",
+        "labels_dense_h50",
+        "state_info_steps",
+        "state_done",
+        "unroll_index_at_collection",
+        "valid_mask",
+        "cost_rank_horizon",
+        "cost_rank_num_candidates",
+        "cost_dense_prox_tau",
+        "epoch_dumped",
+    }.issubset(data.files)
+    assert data["states"].shape[0] == _tiny_config().cost_rank_buffer_capacity
+    assert data["candidate_actions"].shape[1] == _tiny_config().cost_rank_num_candidates
+    assert int(data["epoch_dumped"]) == 1
+
+
+def test_rank_buffer_dump_hook_disabled_by_default(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "rank_dump.npz"
+    monkeypatch.delenv("SR_CPO_DUMP_RANK_BUFFER_AT_EPOCH", raising=False)
+    monkeypatch.setenv("SR_CPO_DUMP_RANK_BUFFER_PATH", str(output))
+
+    run_training(_tiny_config(), print_fn=lambda _: None)
+
+    assert not output.exists()
 
 
 def test_epoch_formatter_includes_static_diff_probe_markers() -> None:

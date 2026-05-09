@@ -27,6 +27,74 @@ _GOAL_LIDAR_START = 16
 _GOAL_LIDAR_END = 32
 
 
+class _SafeLearningAutoResetWrapper:
+    """Auto-reset wrapper for safe-learning states that store MJX data as ``data``."""
+
+    def __init__(self, env: Any) -> None:
+        self.env = env
+
+    @property
+    def action_size(self) -> Any:
+        return self.env.action_size
+
+    @property
+    def observation_size(self) -> Any:
+        return self.env.observation_size
+
+    def reset(self, rng: jax.Array) -> Any:
+        state = self.env.reset(rng)
+        info = dict(state.info)
+        info["first_obs"] = state.obs
+        if hasattr(state, "pipeline_state"):
+            info["first_pipeline_state"] = state.pipeline_state
+        if hasattr(state, "data"):
+            info["first_data"] = state.data
+        return state.replace(info=info)
+
+    def step(self, state: Any, action: jax.Array) -> Any:
+        raw_next_state = self.raw_step(state, action)
+        return self.reset_done(raw_next_state)
+
+    def raw_step(self, state: Any, action: jax.Array) -> Any:
+        if "steps" in state.info:
+            info = dict(state.info)
+            info["steps"] = jnp.where(
+                state.done, jnp.zeros_like(info["steps"]), info["steps"]
+            )
+            state = state.replace(info=info)
+        state = state.replace(done=jnp.zeros_like(state.done))
+        return self.env.step(state, action)
+
+    def reset_done(self, next_state: Any) -> Any:
+        def where_done(reset_value: Any, next_value: Any) -> Any:
+            done = next_state.done
+            if getattr(done, "shape", ()):
+                done = jnp.reshape(
+                    done,
+                    [reset_value.shape[0]] + [1] * (reset_value.ndim - 1),
+                )
+            return jnp.where(done, reset_value, next_value)
+
+        replace_kwargs: dict[str, Any] = {
+            "obs": jax.tree_util.tree_map(
+                where_done, next_state.info["first_obs"], next_state.obs
+            )
+        }
+        if "first_pipeline_state" in next_state.info and hasattr(
+            next_state, "pipeline_state"
+        ):
+            replace_kwargs["pipeline_state"] = jax.tree_util.tree_map(
+                where_done,
+                next_state.info["first_pipeline_state"],
+                next_state.pipeline_state,
+            )
+        if "first_data" in next_state.info and hasattr(next_state, "data"):
+            replace_kwargs["data"] = jax.tree_util.tree_map(
+                where_done, next_state.info["first_data"], next_state.data
+            )
+        return next_state.replace(**replace_kwargs)
+
+
 @struct.dataclass
 class Transition:
     """Canonical SR-CPO transition emitted by environment adapters."""
@@ -162,7 +230,8 @@ class SafeLearningGoToGoalAdapter:
             base_env, episode_length=episode_length, action_repeat=action_repeat
         )
         self.base_env = base_env
-        self.env = training.VmapWrapper(episodic_env, batch_size=num_envs)
+        vector_env = training.VmapWrapper(episodic_env, batch_size=num_envs)
+        self.env = _SafeLearningAutoResetWrapper(vector_env)
         self.num_envs = num_envs
         self.episode_length = episode_length
         self.goal_mode = goal_mode
@@ -224,9 +293,10 @@ class SafeLearningGoToGoalAdapter:
 
     def step(self, state: Any, action: jax.Array) -> tuple[Any, Transition]:
         action = jnp.asarray(action, dtype=jnp.float32)
-        next_state = self.env.step(state, action)
-        next_state = self._carry_initial_vase_xy(state, next_state)
-        transition = self._transition_from_step(state, action, next_state)
+        raw_next_state = self.env.raw_step(state, action)
+        transition = self._transition_from_step(state, action, raw_next_state)
+        next_state = self.env.reset_done(raw_next_state)
+        next_state = self._carry_initial_vase_xy(raw_next_state, next_state)
         return next_state, transition
 
     def _vase_body_xy(self, state: Any) -> jax.Array | None:
@@ -314,8 +384,8 @@ class SafeLearningGoToGoalAdapter:
         dense_cost_zero_action = None
         dense_cost_neg_action = None
         if self.probe_counterfactual_costs:
-            zero_next_state = self.env.step(state, jnp.zeros_like(action))
-            neg_next_state = self.env.step(state, -action)
+            zero_next_state = self.env.raw_step(state, jnp.zeros_like(action))
+            neg_next_state = self.env.raw_step(state, -action)
             sparse_cost_zero_action = _cost_from_info(zero_next_state.info)
             sparse_cost_neg_action = _cost_from_info(neg_next_state.info)
             cost_zero_action, dense_cost_zero_action, _ = self._cost_target_and_safety(

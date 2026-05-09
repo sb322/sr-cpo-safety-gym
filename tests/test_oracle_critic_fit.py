@@ -62,3 +62,55 @@ def test_done_aware_return_zeroes_after_done() -> None:
     ret = _done_aware_return(costs, discounts, gamma=0.9)
     expected = 1.0 + 0.9 + 0.9**2
     assert float(ret[0]) == pytest.approx(expected)
+
+
+def test_oracle_on_rank_dump_learns_synthetic_order(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("jax")
+    from scripts.oracle_critic_fit import OracleFitConfig, _oracle_on_rank_dump
+
+    num_states = 12
+    num_candidates = 4
+    states = np.zeros((num_states, 5), dtype=np.float32)
+    goals = np.zeros((num_states, 2), dtype=np.float32)
+    action_values = np.linspace(-1.0, 1.0, num_candidates, dtype=np.float32)
+    actions = np.zeros((num_states, num_candidates, 2), dtype=np.float32)
+    actions[:, :, 0] = action_values[None, :]
+    labels = np.broadcast_to(action_values[None, :], (num_states, num_candidates))
+    dump_path = tmp_path / "rank_dump.npz"
+    np.savez(
+        dump_path,
+        states=states,
+        candidate_actions=actions,
+        goals=goals,
+        labels_dense_h50=labels,
+        labels_sparse_h50=labels,
+        valid_mask=np.ones((num_states,), dtype=bool),
+        cost_rank_horizon=np.asarray(50, dtype=np.int32),
+        cost_rank_num_candidates=np.asarray(num_candidates, dtype=np.int32),
+        cost_dense_prox_tau=np.asarray(0.5, dtype=np.float32),
+        epoch_dumped=np.asarray(1, dtype=np.int32),
+    )
+
+    _oracle_on_rank_dump(
+        OracleFitConfig(
+            load_rank_dump=str(dump_path),
+            output_csv=str(tmp_path / "oracle.csv"),
+            oracle_results_npz=str(tmp_path / "oracle.npz"),
+            rank_dump_oracle_seeds=1,
+            fit_steps=500,
+            fit_batch_size=16,
+            fit_learning_rate=1e-2,
+            fit_val_fraction=0.5,
+            fit_bootstrap_samples=50,
+            width=32,
+            num_blocks=1,
+            use_residual=False,
+        )
+    )
+
+    out = capsys.readouterr().out
+    match = re.search(r"ORACLE_ON_RANK_BUFFER spearman_mean=([-0-9.eE]+)", out)
+    assert match is not None
+    assert float(match.group(1)) >= 0.9
