@@ -8,6 +8,7 @@ are the same code path used by the production runner.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ from sr_cpo.rank_buffer import (
     insert_rank_examples,
     make_rank_buffer,
     sample_rank_batch,
+    save_rank_buffer_npz,
 )
 from sr_cpo.replay_buffer import (
     ReplayBuffer,
@@ -3230,6 +3232,38 @@ def print_epoch1_forensics(
         print_fn(f"  {name} first5=[{rendered}]")
 
 
+def _rank_buffer_dump_target(epoch: int) -> Path | None:
+    raw_epoch = os.environ.get("SR_CPO_DUMP_RANK_BUFFER_AT_EPOCH", "")
+    if not raw_epoch:
+        return None
+    try:
+        dump_epoch = int(raw_epoch)
+    except ValueError as exc:
+        raise ValueError("SR_CPO_DUMP_RANK_BUFFER_AT_EPOCH must be an integer") from exc
+    if dump_epoch <= 0 or epoch != dump_epoch:
+        return None
+    default_path = f"rank_buffer_dump_epoch{dump_epoch}.npz"
+    return Path(os.environ.get("SR_CPO_DUMP_RANK_BUFFER_PATH", default_path))
+
+
+def _maybe_dump_rank_buffer(
+    *, state: TrainState, config: TrainConfig, epoch: int, print_fn: PrintFn
+) -> None:
+    dump_path = _rank_buffer_dump_target(epoch)
+    if dump_path is None:
+        return
+    dump_path.parent.mkdir(parents=True, exist_ok=True)
+    save_rank_buffer_npz(
+        str(dump_path),
+        state.rank_buffer,
+        cost_rank_horizon=config.cost_rank_horizon,
+        cost_rank_num_candidates=config.cost_rank_num_candidates,
+        cost_dense_prox_tau=config.cost_dense_prox_tau,
+        epoch_dumped=epoch,
+    )
+    print_fn(f"RANK_BUFFER_DUMP={dump_path}")
+
+
 def run_training(
     config: TrainConfig | None = None,
     *,
@@ -3254,6 +3288,9 @@ def run_training(
         start = time.perf_counter()
         state, metrics = training_epoch(state)
         jax.tree_util.tree_map(lambda x: x.block_until_ready(), metrics)
+        _maybe_dump_rank_buffer(
+            state=state, config=config, epoch=epoch + 1, print_fn=print_fn
+        )
         elapsed = time.perf_counter() - start
         merged_eval_metrics: dict[str, Array] = {}
         for std_scale, policy_evaluator in policy_evaluators:

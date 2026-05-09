@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from sr_cpo.env_wrappers import Transition
@@ -457,6 +458,40 @@ def test_run_training_prints_required_probe_sections() -> None:
     assert "eval_min_goal_dist_initial_goal=" in output
     assert "eval_time_at_goal_resampled=" in output
     assert "eval_final_goal_dist_resampled=" in output
+
+
+def test_rank_buffer_dump_hook_writes_npz(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "rank_dump.npz"
+    monkeypatch.setenv("SR_CPO_DUMP_RANK_BUFFER_AT_EPOCH", "1")
+    monkeypatch.setenv("SR_CPO_DUMP_RANK_BUFFER_PATH", str(output))
+
+    run_training(_tiny_config(), print_fn=lambda _: None)
+
+    data = np.load(output)
+    assert {
+        "states",
+        "candidate_actions",
+        "goals",
+        "labels_dense_h50",
+        "valid_mask",
+        "cost_rank_horizon",
+        "cost_rank_num_candidates",
+        "cost_dense_prox_tau",
+        "epoch_dumped",
+    }.issubset(data.files)
+    assert data["states"].shape[0] == _tiny_config().cost_rank_buffer_capacity
+    assert data["candidate_actions"].shape[1] == _tiny_config().cost_rank_num_candidates
+    assert int(data["epoch_dumped"]) == 1
+
+
+def test_rank_buffer_dump_hook_disabled_by_default(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "rank_dump.npz"
+    monkeypatch.delenv("SR_CPO_DUMP_RANK_BUFFER_AT_EPOCH", raising=False)
+    monkeypatch.setenv("SR_CPO_DUMP_RANK_BUFFER_PATH", str(output))
+
+    run_training(_tiny_config(), print_fn=lambda _: None)
+
+    assert not output.exists()
 
 
 def test_epoch_formatter_includes_static_diff_probe_markers() -> None:

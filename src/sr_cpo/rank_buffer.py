@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import struct
 
 
@@ -116,4 +117,30 @@ def sample_rank_batch(
         dense_labels=buffer.dense_labels[indices],
         sparse_labels=buffer.sparse_labels[indices],
         valid=valid,
+    )
+
+
+def save_rank_buffer_npz(
+    path: str,
+    buffer: RankBuffer,
+    *,
+    cost_rank_horizon: int,
+    cost_rank_num_candidates: int,
+    cost_dense_prox_tau: float,
+    epoch_dumped: int,
+) -> None:
+    """Serializes a RankBuffer snapshot for offline oracle refitting."""
+
+    np.savez(
+        path,
+        states=np.asarray(buffer.states),
+        candidate_actions=np.asarray(buffer.candidate_actions),
+        goals=np.asarray(buffer.goals),
+        labels_dense_h50=np.asarray(buffer.dense_labels),
+        labels_sparse_h50=np.asarray(buffer.sparse_labels),
+        valid_mask=np.asarray(buffer.valid),
+        cost_rank_horizon=np.asarray(cost_rank_horizon, dtype=np.int32),
+        cost_rank_num_candidates=np.asarray(cost_rank_num_candidates, dtype=np.int32),
+        cost_dense_prox_tau=np.asarray(cost_dense_prox_tau, dtype=np.float32),
+        epoch_dumped=np.asarray(epoch_dumped, dtype=np.int32),
     )
