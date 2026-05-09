@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from sr_cpo.env_wrappers import Transition
 from sr_cpo.train import (
@@ -418,9 +419,26 @@ def test_rank_state_history_mask_requires_full_alive_window() -> None:
     assert mask.tolist() == [
         [True, False],
         [True, False],
-        [False, True],
+        [False, False],
         [False, False],
     ]
+
+
+def test_rank_state_history_mask_counts_unroll_lookahead() -> None:
+    discounts = jnp.ones((62, 1), dtype=jnp.float32)
+
+    mask = _rank_state_history_mask(discounts, horizon=20)
+
+    assert float(jnp.mean(mask.astype(jnp.float32))) == pytest.approx(42 / 62)
+
+
+def test_rank_state_history_mask_splits_at_done() -> None:
+    discounts = jnp.ones((62, 1), dtype=jnp.float32)
+    discounts = discounts.at[30, 0].set(0.0)
+
+    mask = _rank_state_history_mask(discounts, horizon=20)
+
+    assert float(jnp.mean(mask.astype(jnp.float32))) == pytest.approx(22 / 62)
 
 
 def test_run_training_prints_required_probe_sections() -> None:
