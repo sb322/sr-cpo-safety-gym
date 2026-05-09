@@ -352,6 +352,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
         in source
     )
     assert 'COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"' in source
+    assert 'PID_COST_SOURCE="${PID_COST_SOURCE_OVERRIDE:-active}"' in source
     assert 'PID_KP="${PID_KP_OVERRIDE:-5.0}"' in source
     assert 'PID_KI="${PID_KI_OVERRIDE:-0.1}"' in source
     assert 'PID_KD="${PID_KD_OVERRIDE:-0.0}"' in source
@@ -367,6 +368,7 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "Qc-Jc=" in source
     assert "pid_integral_decay" in source
     assert "Sdecay=" in source
+    assert '--pid-cost-source "$PID_COST_SOURCE"' in source
     assert '--pid-integral-decay "$PID_INTEGRAL_DECAY"' in source
     assert "--use-residual" in source
     assert '--goal-mode "$GOAL_MODE"' in source
@@ -409,6 +411,30 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
     assert "cost_resid=" in source
     assert "min_haz=" in source
     assert "min_vase=" in source
+
+
+def test_depth_dense_sweep_matches_cmdp_depth_grid_with_dense_pid_source() -> None:
+    source = Path("slurm/depth_dense_sweep.sh").read_text()
+
+    assert "#SBATCH --array=0-11" in source
+    assert "safe_depth_dense.%A_%a.out" in source
+    assert (
+        'DEPTH_LABELS=("dense_depth4" "dense_depth8" '
+        '"dense_depth16" "dense_depth32")'
+    ) in source
+    assert 'NUM_BLOCK_VALUES=("4" "8" "16" "32")' in source
+    assert 'SEED_VALUES=("0" "1" "2")' in source
+    assert "export EPOCHS_OVERRIDE=200" in source
+    assert "export STEPS_PER_EPOCH_OVERRIDE=7" in source
+    assert "export SGD_STEPS_OVERRIDE=4" in source
+    assert "export COST_MODE_OVERRIDE=dense_proximity" in source
+    assert "export COST_DENSE_PROX_TAU_OVERRIDE=0.5" in source
+    assert "export PID_COST_SOURCE_OVERRIDE=sparse" in source
+    assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
+    assert "true_action_sparse_cost_spread" in source
+    assert "true_action_dense_cost_spread" in source
 
 
 def test_relxy_depth_pid_off_200epoch_sweeps_representation_depth() -> None:
