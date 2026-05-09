@@ -431,6 +431,7 @@ def test_depth_dense_sweep_matches_cmdp_depth_grid_with_dense_pid_source() -> No
     assert "export COST_DENSE_PROX_TAU_OVERRIDE=0.5" in source
     assert "export PID_COST_SOURCE_OVERRIDE=sparse" in source
     assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
+    assert "export EVAL_COUNTERFACTUAL_ACTION_PROBES_OVERRIDE=true" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source
     assert "true_action_sparse_cost_spread" in source
