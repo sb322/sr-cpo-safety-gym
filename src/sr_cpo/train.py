@@ -398,24 +398,6 @@ def _rank_state_history_mask(discounts: Array, horizon: int) -> Array:
     return jnp.logical_and(window_alive, enough_future)
 
 
-def _sample_indices_from_mask(
-    key: Array, mask: Array, count: int
-) -> tuple[Array, Array, Array]:
-    """Samples flat indices from a boolean mask with replacement."""
-
-    flat_mask = jnp.asarray(mask, dtype=bool).reshape(-1)
-    weights = flat_mask.astype(jnp.int32)
-    total = jnp.sum(weights)
-    safe_total = jnp.maximum(total, 1)
-    draws = jax.random.randint(key, (count,), 0, safe_total)
-    cdf = jnp.cumsum(weights)
-    indices = jnp.searchsorted(cdf, draws + 1, side="left")
-    valid = total > 0
-    indices = jnp.where(valid, indices, jnp.zeros_like(indices))
-    selected_valid = jnp.take(flat_mask, indices, mode="clip")
-    return indices, selected_valid, total
-
-
 def _deterministic_actor_action(
     actor: Actor,
     actor_params: Any,
@@ -471,10 +453,17 @@ def _collect_rank_labels(
         raise ValueError("rank-label collection requires objects.env_adapter")
 
     select_key, action_key = jax.random.split(key)
-    state_indices, selected_state_valid, valid_state_count = _sample_indices_from_mask(
+    valid_state_count = jnp.sum(jnp.asarray(state_mask, dtype=bool))
+    state_indices = jax.random.randint(
         select_key,
-        state_mask,
-        config.cost_rank_states_per_epoch,
+        (config.cost_rank_states_per_epoch,),
+        0,
+        state_pool_size,
+    )
+    selected_state_valid = jnp.take(
+        jnp.asarray(state_mask, dtype=bool).reshape(-1),
+        state_indices,
+        mode="clip",
     )
     selected_env_state = _take_env_state(env_state, state_indices, state_pool_size)
     selected_obs = _real_state_observation(env_adapter, selected_env_state)
@@ -548,7 +537,6 @@ def _collect_rank_labels(
     example_valid = label_spread > jnp.asarray(
         config.cost_rank_min_label_spread, dtype=jnp.float32
     )
-    example_valid = jnp.logical_and(example_valid, selected_state_valid)
     rank_buffer = insert_rank_examples(
         train_state.rank_buffer,
         states=selected_model_obs,
