@@ -27,6 +27,69 @@ _GOAL_LIDAR_START = 16
 _GOAL_LIDAR_END = 32
 
 
+class _SafeLearningAutoResetWrapper:
+    """Auto-reset wrapper for safe-learning states that store MJX data as ``data``."""
+
+    def __init__(self, env: Any) -> None:
+        self.env = env
+
+    @property
+    def action_size(self) -> Any:
+        return self.env.action_size
+
+    @property
+    def observation_size(self) -> Any:
+        return self.env.observation_size
+
+    def reset(self, rng: jax.Array) -> Any:
+        state = self.env.reset(rng)
+        info = dict(state.info)
+        info["first_obs"] = state.obs
+        if hasattr(state, "pipeline_state"):
+            info["first_pipeline_state"] = state.pipeline_state
+        if hasattr(state, "data"):
+            info["first_data"] = state.data
+        return state.replace(info=info)
+
+    def step(self, state: Any, action: jax.Array) -> Any:
+        if "steps" in state.info:
+            info = dict(state.info)
+            info["steps"] = jnp.where(
+                state.done, jnp.zeros_like(info["steps"]), info["steps"]
+            )
+            state = state.replace(info=info)
+        state = state.replace(done=jnp.zeros_like(state.done))
+        next_state = self.env.step(state, action)
+
+        def where_done(reset_value: Any, next_value: Any) -> Any:
+            done = next_state.done
+            if getattr(done, "shape", ()):
+                done = jnp.reshape(
+                    done,
+                    [reset_value.shape[0]] + [1] * (reset_value.ndim - 1),
+                )
+            return jnp.where(done, reset_value, next_value)
+
+        replace_kwargs: dict[str, Any] = {
+            "obs": jax.tree_util.tree_map(
+                where_done, next_state.info["first_obs"], next_state.obs
+            )
+        }
+        if "first_pipeline_state" in next_state.info and hasattr(
+            next_state, "pipeline_state"
+        ):
+            replace_kwargs["pipeline_state"] = jax.tree_util.tree_map(
+                where_done,
+                next_state.info["first_pipeline_state"],
+                next_state.pipeline_state,
+            )
+        if "first_data" in next_state.info and hasattr(next_state, "data"):
+            replace_kwargs["data"] = jax.tree_util.tree_map(
+                where_done, next_state.info["first_data"], next_state.data
+            )
+        return next_state.replace(**replace_kwargs)
+
+
 @struct.dataclass
 class Transition:
     """Canonical SR-CPO transition emitted by environment adapters."""
@@ -163,7 +226,7 @@ class SafeLearningGoToGoalAdapter:
         )
         self.base_env = base_env
         vector_env = training.VmapWrapper(episodic_env, batch_size=num_envs)
-        self.env = training.AutoResetWrapper(vector_env)
+        self.env = _SafeLearningAutoResetWrapper(vector_env)
         self.num_envs = num_envs
         self.episode_length = episode_length
         self.goal_mode = goal_mode
