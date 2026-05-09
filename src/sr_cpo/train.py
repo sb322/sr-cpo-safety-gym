@@ -138,6 +138,7 @@ class TrainConfig:
     entropy_param: float = 0.5
     alpha_max: float = 1.0
     cost_limit: float = 0.0001
+    pid_cost_source: str = "active"
     pid_kp: float = 5.0
     pid_ki: float = 0.1
     pid_kd: float = 0.0
@@ -2128,6 +2129,46 @@ def _insert_vector_trajectories(
     return buffer
 
 
+def _discounted_step_returns(
+    costs: Array,
+    discounts: Array,
+    gamma: float,
+) -> Array:
+    costs_t = jnp.swapaxes(jnp.asarray(costs, dtype=jnp.float32), 0, 1)
+    discounts_t = jnp.swapaxes(jnp.asarray(discounts, dtype=jnp.float32), 0, 1)
+    gamma_arr = jnp.asarray(gamma, dtype=jnp.float32)
+
+    def scan_step(carry: Array, inputs: tuple[Array, Array]) -> tuple[Array, Array]:
+        cost_t, discount_t = inputs
+        ret_t = cost_t + gamma_arr * discount_t * carry
+        return ret_t, ret_t
+
+    _, returns_rev = jax.lax.scan(
+        scan_step,
+        jnp.zeros((costs_t.shape[1],), dtype=jnp.float32),
+        (costs_t[::-1], discounts_t[::-1]),
+    )
+    return jnp.swapaxes(returns_rev[::-1], 0, 1)
+
+
+def _sparse_mc_pid_cost_from_replay(
+    replay: ReplayBuffer,
+    batch: Transition,
+    *,
+    gamma_c: float,
+) -> Array:
+    """Monte-Carlo sparse return used to decouple PID from dense label scale."""
+
+    traj_idx = jnp.asarray(batch.extras["trajectory_index"], dtype=jnp.int32)
+    step_idx = jnp.asarray(batch.extras["step_index"], dtype=jnp.int32)
+    # Replay intentionally keeps the sparse signal as hard events so dense runs
+    # can train Qc on dense targets without pegging PID to dense-cost magnitude.
+    sparse_costs = replay.hard_violations[traj_idx]
+    discounts = replay.discounts[traj_idx]
+    returns = _discounted_step_returns(sparse_costs, discounts, gamma_c)
+    return jnp.mean(returns[jnp.arange(step_idx.shape[0]), step_idx])
+
+
 def _sgd_step(
     train_state: TrainState,
     objects: TrainingObjects,
@@ -2299,17 +2340,23 @@ def _sgd_step(
     log_alpha_cap = jnp.log(jnp.asarray(config.alpha_max, dtype=jnp.float32))
     log_alpha = jnp.minimum(log_alpha, log_alpha_cap)
 
-    jc_hat, dual_aux = estimate_discounted_cost(
-        cost_critic=objects.cost_critic,
-        cost_critic_params=cost_critic_params,
-        actor=objects.actor,
-        actor_params=actor_params,
-        initial_states=batch.observation,
-        goals=batch.extras["goal"],
-        key=dual_key,
-        gamma_c=config.gamma_c,
-        num_action_samples=2,
-    )
+    if config.pid_cost_source == "active":
+        jc_hat, dual_aux = estimate_discounted_cost(
+            cost_critic=objects.cost_critic,
+            cost_critic_params=cost_critic_params,
+            actor=objects.actor,
+            actor_params=actor_params,
+            initial_states=batch.observation,
+            goals=batch.extras["goal"],
+            key=dual_key,
+            gamma_c=config.gamma_c,
+            num_action_samples=2,
+        )
+    else:
+        jc_hat = _sparse_mc_pid_cost_from_replay(
+            train_state.replay, batch, gamma_c=config.gamma_c
+        )
+        dual_aux = {"dual_qc_mean": jc_hat}
     pid_state = update_pid_lagrangian(
         train_state.pid_state,
         estimated_cost=jc_hat,
@@ -2591,6 +2638,8 @@ def initialize_training(
         raise ValueError("critic_score_mode must be 'cosine' or 'l2'")
     if config.cost_mode not in {"sparse", "dense_proximity"}:
         raise ValueError("cost_mode must be 'sparse' or 'dense_proximity'")
+    if config.pid_cost_source not in {"active", "sparse"}:
+        raise ValueError("pid_cost_source must be 'active' or 'sparse'")
     if config.cost_dense_prox_tau <= 0.0:
         raise ValueError("cost_dense_prox_tau must be positive")
     if config.cost_rank_loss_weight < 0.0:

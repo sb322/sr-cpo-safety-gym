@@ -88,6 +88,7 @@ COST_RISK_MIN_FRACTION_AVAILABLE="${COST_RISK_MIN_FRACTION_AVAILABLE_OVERRIDE:-0
 COST_MODE="${COST_MODE_OVERRIDE:-sparse}"
 COST_DENSE_PROX_TAU="${COST_DENSE_PROX_TAU_OVERRIDE:-0.5}"
 COST_LIMIT="${COST_LIMIT_OVERRIDE:-0.0001}"
+PID_COST_SOURCE="${PID_COST_SOURCE_OVERRIDE:-active}"
 PID_KP="${PID_KP_OVERRIDE:-5.0}"
 PID_KI="${PID_KI_OVERRIDE:-0.1}"
 PID_KD="${PID_KD_OVERRIDE:-0.0}"
@@ -194,6 +195,7 @@ echo "COST_MODE=$COST_MODE"
 echo "COST_DENSE_PROX_TAU=$COST_DENSE_PROX_TAU"
 echo "SEED=$SEED"
 echo "COST_LIMIT=$COST_LIMIT"
+echo "PID_COST_SOURCE=$PID_COST_SOURCE"
 echo "PID_KP=$PID_KP"
 echo "PID_KI=$PID_KI"
 echo "PID_KD=$PID_KD"
@@ -288,9 +290,15 @@ assert "cost_mode: str = \"sparse\"" in src_train and "dense_proximity" in src_t
     "config-driven dense proximity cost mode missing from train.py"
 assert "cost_dense_prox_tau: float = 0.5" in src_train, \
     "dense proximity tau config missing from train.py"
+assert "pid_cost_source: str = \"active\"" in src_train \
+    and "_sparse_mc_pid_cost_from_replay" in src_train, \
+    "PID sparse-MC source split missing from train.py"
 assert "dense_cost_mean=" in src_train and "dense_cost_std=" in src_train \
     and "sparse_cost" in src_env and "dense_cost" in src_env, \
     "dense/sparse cost separation diagnostics missing"
+assert "true_action_sparse_cost_spread" in src_train \
+    and "true_action_dense_cost_spread" in src_train, \
+    "counterfactual sparse/dense spread split missing"
 assert "pid_integral_decay" in src_train and "Sdecay=" in src_train, \
     "PID integral decay/release path missing from train.py"
 assert "cost_return" in src_replay and "cost_return_gamma" in src_replay, \
@@ -423,6 +431,7 @@ echo "ENTRYPOINT=$ENTRYPOINT"
     --cost-risk-min-fraction-available "$COST_RISK_MIN_FRACTION_AVAILABLE" \
     --alpha-max 1.0 \
     --cost-limit "$COST_LIMIT" \
+    --pid-cost-source "$PID_COST_SOURCE" \
     --pid-kp "$PID_KP" \
     --pid-ki "$PID_KI" \
     --pid-kd "$PID_KD" \

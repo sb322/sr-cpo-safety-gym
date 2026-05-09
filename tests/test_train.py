@@ -11,10 +11,13 @@ from sr_cpo.env_wrappers import Transition
 from sr_cpo.train import (
     ToyEnvState,
     TrainConfig,
+    _counterfactual_candidate_summary,
+    _discounted_step_returns,
     _flatten_env_state_history,
     _mask_goal_in_state,
     _rank_candidate_actions,
     _rank_state_history_mask,
+    _sparse_mc_pid_cost_from_replay,
     format_epoch_metrics,
     initialize_training,
     make_deterministic_evaluator,
@@ -22,6 +25,7 @@ from sr_cpo.train import (
     prefill_buffer,
     run_training,
 )
+from sr_cpo.replay_buffer import insert_trajectory, make_replay_buffer
 
 
 def _tiny_config() -> TrainConfig:
@@ -389,6 +393,7 @@ def test_initialize_training_uses_clipped_optimizers_by_default() -> None:
 def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_limit == 0.0001
     assert TrainConfig().cost_mode == "sparse"
+    assert TrainConfig().pid_cost_source == "active"
     assert TrainConfig().cost_dense_prox_tau == 0.5
     assert TrainConfig().cost_rank_loss_weight == 0.0
     assert TrainConfig().cost_rank_horizon == 50
@@ -406,6 +411,84 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().enable_multistep_counterfactual_probes is False
     assert TrainConfig().counterfactual_probe_horizons == "5,10,20"
     assert TrainConfig().counterfactual_probe_max_states == 0
+
+
+def test_pid_cost_source_sparse_uses_sparse_returns() -> None:
+    buffer = make_replay_buffer(
+        capacity=1, episode_length=4, observation_dim=3, action_dim=2
+    )
+    observations = jnp.zeros((5, 3), dtype=jnp.float32)
+    actions = jnp.zeros((4, 2), dtype=jnp.float32)
+    rewards = jnp.zeros((4,), dtype=jnp.float32)
+    discounts = jnp.asarray([1.0, 1.0, 0.0, 1.0], dtype=jnp.float32)
+    dense_costs = jnp.asarray([100.0, 100.0, 100.0, 100.0], dtype=jnp.float32)
+    sparse_costs = jnp.asarray([0.0, 1.0, 0.0, 1.0], dtype=jnp.float32)
+    buffer = insert_trajectory(
+        buffer,
+        observations=observations,
+        actions=actions,
+        rewards=rewards,
+        discounts=discounts,
+        costs=dense_costs,
+        hard_violations=sparse_costs,
+    )
+    batch = Transition(
+        observation=jnp.zeros((2, 3), dtype=jnp.float32),
+        action=jnp.zeros((2, 2), dtype=jnp.float32),
+        reward=jnp.zeros((2,), dtype=jnp.float32),
+        discount=jnp.ones((2,), dtype=jnp.float32),
+        extras={
+            "trajectory_index": jnp.asarray([0, 0], dtype=jnp.int32),
+            "step_index": jnp.asarray([0, 1], dtype=jnp.int32),
+        },
+    )
+
+    jc_hat = _sparse_mc_pid_cost_from_replay(buffer, batch, gamma_c=0.5)
+
+    expected_returns = _discounted_step_returns(
+        sparse_costs[None, :], discounts[None, :], gamma=0.5
+    )
+    expected = jnp.mean(expected_returns[0, jnp.asarray([0, 1])])
+    assert float(jc_hat) == pytest.approx(float(expected))
+    assert float(jc_hat) < 2.0
+
+
+def test_pid_cost_source_sparse_matches_active_returns_in_sparse_mode() -> None:
+    buffer = make_replay_buffer(
+        capacity=1, episode_length=4, observation_dim=3, action_dim=2
+    )
+    observations = jnp.zeros((5, 3), dtype=jnp.float32)
+    actions = jnp.zeros((4, 2), dtype=jnp.float32)
+    rewards = jnp.zeros((4,), dtype=jnp.float32)
+    discounts = jnp.asarray([1.0, 1.0, 0.0, 1.0], dtype=jnp.float32)
+    sparse_costs = jnp.asarray([0.0, 1.0, 0.0, 1.0], dtype=jnp.float32)
+    buffer = insert_trajectory(
+        buffer,
+        observations=observations,
+        actions=actions,
+        rewards=rewards,
+        discounts=discounts,
+        costs=sparse_costs,
+        hard_violations=sparse_costs,
+    )
+    batch = Transition(
+        observation=jnp.zeros((2, 3), dtype=jnp.float32),
+        action=jnp.zeros((2, 2), dtype=jnp.float32),
+        reward=jnp.zeros((2,), dtype=jnp.float32),
+        discount=jnp.ones((2,), dtype=jnp.float32),
+        extras={
+            "trajectory_index": jnp.asarray([0, 0], dtype=jnp.int32),
+            "step_index": jnp.asarray([0, 1], dtype=jnp.int32),
+        },
+    )
+
+    sparse_mc = _sparse_mc_pid_cost_from_replay(buffer, batch, gamma_c=0.5)
+    active_returns = _discounted_step_returns(
+        buffer.costs, buffer.discounts, gamma=0.5
+    )
+    active_mc = jnp.mean(active_returns[0, jnp.asarray([0, 1])])
+
+    assert float(sparse_mc) == pytest.approx(float(active_mc))
 
 
 def test_rank_state_history_mask_requires_full_alive_window() -> None:
@@ -463,6 +546,32 @@ def test_rank_candidate_actions_use_local_candidates_and_uniform_anchors() -> No
     assert actions.shape == (3, 8, 2)
     assert bool(jnp.all(actions[:, :6, :] == 0.0))
     assert bool(jnp.any(actions[:, 6:, :] != 0.0))
+
+
+def test_cost_spread_split_by_mode() -> None:
+    qcs = jnp.zeros((3, 2), dtype=jnp.float32)
+    active_cost = jnp.asarray([[0.0, 1.0], [2.0, 1.5], [1.0, 1.25]])
+    sparse_cost = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    dense_cost = jnp.asarray([[0.1, 10.0], [0.2, 12.0], [0.3, 11.0]])
+
+    metrics = _counterfactual_candidate_summary(
+        prefix="",
+        qcs=qcs,
+        true_cost=active_cost,
+        true_sparse_cost=sparse_cost,
+        true_dense_cost=dense_cost,
+        hard_violation=sparse_cost,
+        hazard_violation=sparse_cost,
+        current_cost=jnp.asarray([0.0, 1.0], dtype=jnp.float32),
+        current_sparse_cost=jnp.asarray([0.0, 0.0], dtype=jnp.float32),
+        current_dense_cost=jnp.asarray([0.1, 10.0], dtype=jnp.float32),
+        current_hard_violation=jnp.asarray([0.0, 0.0], dtype=jnp.float32),
+        current_min_hazard_dist=jnp.asarray([1.5, 1.5], dtype=jnp.float32),
+    )
+
+    assert float(metrics["true_active_cost_spread"]) == pytest.approx(1.25)
+    assert float(metrics["true_sparse_cost_spread"]) == pytest.approx(1.0)
+    assert float(metrics["true_dense_cost_spread"]) == pytest.approx(1.1)
 
 
 def test_run_training_prints_required_probe_sections() -> None:
