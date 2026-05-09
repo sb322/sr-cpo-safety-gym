@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import time
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,8 +119,11 @@ class TrainConfig:
     cost_rank_states_per_epoch: int = 8
     cost_rank_buffer_capacity: int = 256
     cost_rank_batch_size: int = 32
-    cost_rank_candidate_perturb_std: float = 0.5
-    cost_rank_uniform_random_frac: float = 0.5
+    # Rank candidates stay mostly actor-local so pairwise labels constrain
+    # dQ_c/da near the actor; a few uniform anchors keep broad ordering signal.
+    cost_rank_candidate_perturb_std: float = 0.075
+    cost_rank_uniform_anchor_count: int = 2
+    cost_rank_uniform_random_frac: float = -1.0
     cost_rank_label_epsilon: float = 0.0
     cost_rank_min_label_spread: float = 1e-4
     cost_rank_label_kind: str = "dense"
@@ -427,7 +431,16 @@ def _rank_candidate_actions(
     action_dim: int,
 ) -> Array:
     num_candidates = config.cost_rank_num_candidates
-    num_uniform = int(round(num_candidates * config.cost_rank_uniform_random_frac))
+    if config.cost_rank_uniform_random_frac >= 0.0:
+        warnings.warn(
+            "cost_rank_uniform_random_frac is deprecated; use "
+            "cost_rank_uniform_anchor_count instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        num_uniform = int(round(num_candidates * config.cost_rank_uniform_random_frac))
+    else:
+        num_uniform = config.cost_rank_uniform_anchor_count
     num_uniform = min(max(num_uniform, 0), num_candidates)
     num_perturb = num_candidates - num_uniform
     perturb_key, uniform_key = jax.random.split(key)
@@ -2551,8 +2564,12 @@ def initialize_training(
         raise ValueError("cost_rank_buffer_capacity must be positive")
     if config.cost_rank_batch_size <= 0:
         raise ValueError("cost_rank_batch_size must be positive")
-    if not 0.0 <= config.cost_rank_uniform_random_frac <= 1.0:
-        raise ValueError("cost_rank_uniform_random_frac must be in [0, 1]")
+    if config.cost_rank_uniform_anchor_count < 0:
+        raise ValueError("cost_rank_uniform_anchor_count must be non-negative")
+    if config.cost_rank_uniform_random_frac >= 0.0 and not (
+        0.0 <= config.cost_rank_uniform_random_frac <= 1.0
+    ):
+        raise ValueError("cost_rank_uniform_random_frac must be -1 or in [0, 1]")
     if config.cost_rank_candidate_perturb_std < 0.0:
         raise ValueError("cost_rank_candidate_perturb_std must be non-negative")
     if config.cost_rank_label_epsilon < 0.0:

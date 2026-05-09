@@ -13,6 +13,7 @@ from sr_cpo.train import (
     TrainConfig,
     _flatten_env_state_history,
     _mask_goal_in_state,
+    _rank_candidate_actions,
     _rank_state_history_mask,
     format_epoch_metrics,
     initialize_training,
@@ -392,6 +393,9 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().cost_rank_loss_weight == 0.0
     assert TrainConfig().cost_rank_horizon == 50
     assert TrainConfig().cost_rank_label_kind == "dense"
+    assert TrainConfig().cost_rank_candidate_perturb_std == 0.075
+    assert TrainConfig().cost_rank_uniform_anchor_count == 2
+    assert TrainConfig().cost_rank_uniform_random_frac == -1.0
     assert TrainConfig().cost_rank_min_label_spread == 1e-4
     assert TrainConfig().cost_rank_debug_dump is False
     assert TrainConfig().cost_risk_replay_ratio == 0.0
@@ -440,6 +444,25 @@ def test_rank_state_history_mask_splits_at_done() -> None:
     mask = _rank_state_history_mask(discounts, horizon=20)
 
     assert float(jnp.mean(mask.astype(jnp.float32))) == pytest.approx(22 / 62)
+
+
+def test_rank_candidate_actions_use_local_candidates_and_uniform_anchors() -> None:
+    actor_action = jnp.zeros((3, 2), dtype=jnp.float32)
+    config = replace(
+        TrainConfig(),
+        cost_rank_num_candidates=8,
+        cost_rank_candidate_perturb_std=0.0,
+        cost_rank_uniform_anchor_count=2,
+        cost_rank_uniform_random_frac=-1.0,
+    )
+
+    actions = _rank_candidate_actions(
+        actor_action, jax.random.PRNGKey(0), config, action_dim=2
+    )
+
+    assert actions.shape == (3, 8, 2)
+    assert bool(jnp.all(actions[:, :6, :] == 0.0))
+    assert bool(jnp.any(actions[:, 6:, :] != 0.0))
 
 
 def test_run_training_prints_required_probe_sections() -> None:
