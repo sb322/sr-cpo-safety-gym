@@ -379,6 +379,43 @@ def _flatten_env_state_history(env_states: Any, time_size: int, env_size: int) -
     return jax.tree_util.tree_map(flatten_leaf, env_states)
 
 
+def _rank_state_history_mask(discounts: Array, horizon: int) -> Array:
+    """Marks rollout states with a full actor-alive window available."""
+
+    alive = jnp.asarray(discounts, dtype=jnp.float32) > 0.5
+    time_size = alive.shape[0]
+    window_alive = jnp.ones_like(alive, dtype=bool)
+    for offset in range(min(horizon, time_size)):
+        shifted = jnp.concatenate(
+            (
+                alive[offset:],
+                jnp.zeros((offset, *alive.shape[1:]), dtype=bool),
+            ),
+            axis=0,
+        )
+        window_alive = jnp.logical_and(window_alive, shifted)
+    enough_future = jnp.arange(time_size)[:, None] <= (time_size - horizon)
+    return jnp.logical_and(window_alive, enough_future)
+
+
+def _sample_indices_from_mask(
+    key: Array, mask: Array, count: int
+) -> tuple[Array, Array, Array]:
+    """Samples flat indices from a boolean mask with replacement."""
+
+    flat_mask = jnp.asarray(mask, dtype=bool).reshape(-1)
+    weights = flat_mask.astype(jnp.int32)
+    total = jnp.sum(weights)
+    safe_total = jnp.maximum(total, 1)
+    draws = jax.random.randint(key, (count,), 0, safe_total)
+    cdf = jnp.cumsum(weights)
+    indices = jnp.searchsorted(cdf, draws + 1, side="left")
+    valid = total > 0
+    indices = jnp.where(valid, indices, jnp.zeros_like(indices))
+    selected_valid = jnp.take(flat_mask, indices, mode="clip")
+    return indices, selected_valid, total
+
+
 def _deterministic_actor_action(
     actor: Actor,
     actor_params: Any,
@@ -425,6 +462,7 @@ def _collect_rank_labels(
     objects: TrainingObjects,
     config: TrainConfig,
     env_state: Any,
+    state_mask: Array,
     state_pool_size: int,
     key: Array,
 ) -> tuple[RankBuffer, Mapping[str, Array]]:
@@ -433,11 +471,10 @@ def _collect_rank_labels(
         raise ValueError("rank-label collection requires objects.env_adapter")
 
     select_key, action_key = jax.random.split(key)
-    state_indices = jax.random.randint(
+    state_indices, selected_state_valid, valid_state_count = _sample_indices_from_mask(
         select_key,
-        (config.cost_rank_states_per_epoch,),
-        0,
-        state_pool_size,
+        state_mask,
+        config.cost_rank_states_per_epoch,
     )
     selected_env_state = _take_env_state(env_state, state_indices, state_pool_size)
     selected_obs = _real_state_observation(env_adapter, selected_env_state)
@@ -511,6 +548,7 @@ def _collect_rank_labels(
     example_valid = label_spread > jnp.asarray(
         config.cost_rank_min_label_spread, dtype=jnp.float32
     )
+    example_valid = jnp.logical_and(example_valid, selected_state_valid)
     rank_buffer = insert_rank_examples(
         train_state.rank_buffer,
         states=selected_model_obs,
@@ -546,6 +584,11 @@ def _collect_rank_labels(
         "rank_rollout_alive_frac": jnp.mean(alive_final),
         "rank_example_valid_frac": jnp.mean(example_valid.astype(jnp.float32)),
         "rank_terminal_free_frac": jnp.mean(terminal_free.astype(jnp.float32)),
+        "rank_state_pool_valid_frac": valid_state_count.astype(jnp.float32)
+        / jnp.maximum(jnp.asarray(state_pool_size, dtype=jnp.float32), 1.0),
+        "rank_selected_state_valid_frac": jnp.mean(
+            selected_state_valid.astype(jnp.float32)
+        ),
     }
     if config.cost_rank_debug_dump:
         first_done = jnp.argmax(done_trace[:, 0, :] > 0.5, axis=0)
@@ -1773,6 +1816,8 @@ def _collect_toy_trajectory(
         "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
         "rank_example_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
         "rank_terminal_free_frac": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_state_pool_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
+        "rank_selected_state_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
     }
     next_state = train_state.replace(
         key=key,
@@ -1943,11 +1988,16 @@ def _collect_real_trajectory(
             config.unroll_length,
             config.num_envs,
         )
+        rank_state_mask = _rank_state_history_mask(
+            transitions.discount,
+            config.cost_rank_horizon,
+        ).reshape((config.unroll_length * config.num_envs,))
         rank_buffer, rank_aux = _collect_rank_labels(
             train_state,
             objects,
             config,
             rank_state_pool,
+            rank_state_mask,
             config.unroll_length * config.num_envs,
             rank_key,
         )
@@ -1959,6 +2009,8 @@ def _collect_real_trajectory(
             "rank_rollout_alive_frac": jnp.asarray(0.0, dtype=jnp.float32),
             "rank_example_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
             "rank_terminal_free_frac": jnp.asarray(0.0, dtype=jnp.float32),
+            "rank_state_pool_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
+            "rank_selected_state_valid_frac": jnp.asarray(0.0, dtype=jnp.float32),
         }
     metrics.update(rank_aux)
     next_state = train_state.replace(
@@ -2455,6 +2507,12 @@ def make_training_epoch(
         metrics["rank_rollout_alive_frac"] = collect_metrics["rank_rollout_alive_frac"]
         metrics["rank_example_valid_frac"] = collect_metrics["rank_example_valid_frac"]
         metrics["rank_terminal_free_frac"] = collect_metrics["rank_terminal_free_frac"]
+        metrics["rank_state_pool_valid_frac"] = collect_metrics[
+            "rank_state_pool_valid_frac"
+        ]
+        metrics["rank_selected_state_valid_frac"] = collect_metrics[
+            "rank_selected_state_valid_frac"
+        ]
         return state, metrics
 
     @jax.jit
@@ -3071,7 +3129,11 @@ def format_epoch_metrics(
                 f"rank_example_valid_frac="
                 f"{_mean_float(metrics, 'rank_example_valid_frac'):.3f} "
                 f"rank_terminal_free_frac="
-                f"{_mean_float(metrics, 'rank_terminal_free_frac'):.3f}]"
+                f"{_mean_float(metrics, 'rank_terminal_free_frac'):.3f} "
+                f"rank_state_pool_valid_frac="
+                f"{_mean_float(metrics, 'rank_state_pool_valid_frac'):.3f} "
+                f"rank_selected_state_valid_frac="
+                f"{_mean_float(metrics, 'rank_selected_state_valid_frac'):.3f}]"
             ),
             *(
                 [counterfactual_line]

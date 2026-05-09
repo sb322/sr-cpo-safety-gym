@@ -11,6 +11,7 @@ from sr_cpo.train import (
     TrainConfig,
     _flatten_env_state_history,
     _mask_goal_in_state,
+    _rank_state_history_mask,
     format_epoch_metrics,
     initialize_training,
     make_deterministic_evaluator,
@@ -401,6 +402,27 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().counterfactual_probe_max_states == 0
 
 
+def test_rank_state_history_mask_requires_full_alive_window() -> None:
+    discounts = jnp.asarray(
+        [
+            [1.0, 1.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ],
+        dtype=jnp.float32,
+    )
+
+    mask = _rank_state_history_mask(discounts, horizon=2)
+
+    assert mask.tolist() == [
+        [True, False],
+        [True, False],
+        [False, True],
+        [False, False],
+    ]
+
+
 def test_run_training_prints_required_probe_sections() -> None:
     lines: list[str] = []
     result = run_training(_tiny_config(), print_fn=lines.append)
@@ -560,6 +582,8 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
         "rank_rollout_alive_frac": jnp.asarray([0.9]),
         "rank_example_valid_frac": jnp.asarray([0.75]),
         "rank_terminal_free_frac": jnp.asarray([0.5]),
+        "rank_state_pool_valid_frac": jnp.asarray([0.25]),
+        "rank_selected_state_valid_frac": jnp.asarray([1.0]),
         "true_action_cost_spread": jnp.asarray([0.05]),
         "true_action_active_cost_spread": jnp.asarray([0.05]),
         "true_action_sparse_cost_spread": jnp.asarray([0.04]),
@@ -749,6 +773,8 @@ def test_epoch_formatter_includes_static_diff_probe_markers() -> None:
     assert "rank_label_within_between=1.20e-02" in text
     assert "rank_example_valid_frac=0.750" in text
     assert "rank_terminal_free_frac=0.500" in text
+    assert "rank_state_pool_valid_frac=0.250" in text
+    assert "rank_selected_state_valid_frac=1.000" in text
     assert "counterfactual[ true_action_active_cost_spread=5.00e-02" in text
     assert "true_action_sparse_cost_spread=4.00e-02" in text
     assert "true_action_dense_cost_spread=6.00e-02" in text

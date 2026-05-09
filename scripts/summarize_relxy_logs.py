@@ -260,6 +260,8 @@ FIELDNAMES = (
     "rank_rollout_alive_frac",
     "rank_example_valid_frac",
     "rank_terminal_free_frac",
+    "rank_state_pool_valid_frac",
+    "rank_selected_state_valid_frac",
     *COUNTERFACTUAL_METRIC_KEYS,
     *EVAL_METRIC_KEYS,
 )
@@ -419,6 +421,12 @@ def parse_log(path: Path) -> dict[str, str]:
         "rank_rollout_alive_frac": last_metrics.get("rank_rollout_alive_frac", ""),
         "rank_example_valid_frac": last_metrics.get("rank_example_valid_frac", ""),
         "rank_terminal_free_frac": last_metrics.get("rank_terminal_free_frac", ""),
+        "rank_state_pool_valid_frac": last_metrics.get(
+            "rank_state_pool_valid_frac", ""
+        ),
+        "rank_selected_state_valid_frac": last_metrics.get(
+            "rank_selected_state_valid_frac", ""
+        ),
         "cost_target": last_metrics.get("c_target", ""),
     }
     for key in METRIC_KEYS:
