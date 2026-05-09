@@ -241,6 +241,26 @@ def _real_state_observation(env_adapter: Any, env_state: Any) -> Array:
     return jnp.asarray(env_state.obs, dtype=jnp.float32)
 
 
+def _env_state_info_value(
+    env_state: Any,
+    key: str,
+    batch_shape: tuple[int, ...],
+    *,
+    dtype: Any = jnp.float32,
+) -> Array:
+    info = getattr(env_state, "info", None)
+    if isinstance(info, Mapping) and key in info:
+        return jnp.asarray(info[key], dtype=dtype)
+    return jnp.zeros(batch_shape, dtype=dtype)
+
+
+def _env_state_done(env_state: Any, batch_shape: tuple[int, ...]) -> Array:
+    done = getattr(env_state, "done", None)
+    if done is None:
+        return jnp.zeros(batch_shape, dtype=jnp.float32)
+    return jnp.asarray(done, dtype=jnp.float32)
+
+
 def _real_robot_xy(env_adapter: Any, env_state: Any) -> Array:
     if hasattr(env_adapter, "achieved_goal"):
         try:
@@ -491,6 +511,12 @@ def _collect_rank_labels(
         mode="clip",
     )
     selected_env_state = _take_env_state(env_state, state_indices, state_pool_size)
+    selected_batch_shape = (config.cost_rank_states_per_epoch,)
+    state_info_steps = _env_state_info_value(
+        selected_env_state, "steps", selected_batch_shape
+    )
+    state_done = _env_state_done(selected_env_state, selected_batch_shape)
+    unroll_index_at_collection = state_indices // config.num_envs
     selected_obs = _real_state_observation(env_adapter, selected_env_state)
     selected_model_obs = _mask_goal_in_state(selected_obs, config)
     selected_goal = _real_rollout_goal(env_adapter, selected_env_state, config)
@@ -562,6 +588,18 @@ def _collect_rank_labels(
     example_valid = label_spread > jnp.asarray(
         config.cost_rank_min_label_spread, dtype=jnp.float32
     )
+    # Guard against stale or near-terminal source states.  The rank rollout uses
+    # done-extend labels, so terminal states would otherwise enter as nearly
+    # flat examples and silently drain the effective RankBuffer size.
+    safe_step_limit = jnp.maximum(
+        jnp.asarray(
+            config.env_episode_length - config.cost_rank_horizon - 5,
+            dtype=jnp.float32,
+        ),
+        jnp.asarray(0.0, dtype=jnp.float32),
+    )
+    step_window_valid = state_info_steps < safe_step_limit
+    example_valid = example_valid & step_window_valid & (state_done < 0.5)
     rank_buffer = insert_rank_examples(
         train_state.rank_buffer,
         states=selected_model_obs,
@@ -569,6 +607,9 @@ def _collect_rank_labels(
         goals=selected_goal,
         dense_labels=dense_labels,
         sparse_labels=sparse_labels,
+        state_info_steps=state_info_steps,
+        state_done=state_done,
+        unroll_index_at_collection=unroll_index_at_collection,
         valid=example_valid,
     )
     centered = label - jnp.mean(label, axis=-1, keepdims=True)
