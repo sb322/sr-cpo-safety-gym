@@ -52,6 +52,10 @@ class _SafeLearningAutoResetWrapper:
         return state.replace(info=info)
 
     def step(self, state: Any, action: jax.Array) -> Any:
+        raw_next_state = self.raw_step(state, action)
+        return self.reset_done(raw_next_state)
+
+    def raw_step(self, state: Any, action: jax.Array) -> Any:
         if "steps" in state.info:
             info = dict(state.info)
             info["steps"] = jnp.where(
@@ -59,8 +63,9 @@ class _SafeLearningAutoResetWrapper:
             )
             state = state.replace(info=info)
         state = state.replace(done=jnp.zeros_like(state.done))
-        next_state = self.env.step(state, action)
+        return self.env.step(state, action)
 
+    def reset_done(self, next_state: Any) -> Any:
         def where_done(reset_value: Any, next_value: Any) -> Any:
             done = next_state.done
             if getattr(done, "shape", ()):
@@ -288,9 +293,10 @@ class SafeLearningGoToGoalAdapter:
 
     def step(self, state: Any, action: jax.Array) -> tuple[Any, Transition]:
         action = jnp.asarray(action, dtype=jnp.float32)
-        next_state = self.env.step(state, action)
-        next_state = self._carry_initial_vase_xy(state, next_state)
-        transition = self._transition_from_step(state, action, next_state)
+        raw_next_state = self.env.raw_step(state, action)
+        transition = self._transition_from_step(state, action, raw_next_state)
+        next_state = self.env.reset_done(raw_next_state)
+        next_state = self._carry_initial_vase_xy(raw_next_state, next_state)
         return next_state, transition
 
     def _vase_body_xy(self, state: Any) -> jax.Array | None:
@@ -378,8 +384,8 @@ class SafeLearningGoToGoalAdapter:
         dense_cost_zero_action = None
         dense_cost_neg_action = None
         if self.probe_counterfactual_costs:
-            zero_next_state = self.env.step(state, jnp.zeros_like(action))
-            neg_next_state = self.env.step(state, -action)
+            zero_next_state = self.env.raw_step(state, jnp.zeros_like(action))
+            neg_next_state = self.env.raw_step(state, -action)
             sparse_cost_zero_action = _cost_from_info(zero_next_state.info)
             sparse_cost_neg_action = _cost_from_info(neg_next_state.info)
             cost_zero_action, dense_cost_zero_action, _ = self._cost_target_and_safety(
