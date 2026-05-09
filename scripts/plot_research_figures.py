@@ -44,7 +44,6 @@ METRIC_LABELS = {
     "actor_qc_percentile": "Actor Qc percentile",
     "best_qc_action_is_actor_frac": "Actor is best-Qc action",
     "cost_risky_batch_frac": "Risky batch fraction",
-    "true_action_cost_spread": "Active cost spread",
     "true_action_active_cost_spread": "Active cost spread",
     "true_action_sparse_cost_spread": "Sparse cost spread",
     "true_action_dense_cost_spread": "Dense cost spread",
