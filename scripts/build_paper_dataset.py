@@ -37,6 +37,12 @@ DEFAULT_CSV_GLOBS = (
 )
 CORE_DEPTHS = {"4", "8", "16", "32"}
 CORE_SEEDS = {"0", "1", "2"}
+PREFERRED_CELL_SOURCES = (
+    "dense_depth_sweep_1024412.csv",
+    "safe_depth_dense.1024412",
+    "dense_depth8_active_pid_sanity_1024474.csv",
+    "safe_dense_d8_active.1024474",
+)
 
 
 def _warn(message: str) -> None:
@@ -97,11 +103,14 @@ def _cell_from_summary_row(row: dict[str, str]) -> dict[str, str] | None:
             "frac_states_with_nonzero_dense_cost_spread",
             row.get("frac_states_with_nonzero_true_cost_spread", ""),
         ),
+        "_source": row.get("_source", row.get("file", "")),
     }
     return out
 
 
-def _cell_score(cell: dict[str, str]) -> tuple[int, int, int]:
+def _cell_score(cell: dict[str, str]) -> tuple[int, int, int, int]:
+    source = cell.get("_source", "")
+    preferred = int(any(token in source for token in PREFERRED_CELL_SOURCES))
     has_counterfactual = int(bool(cell.get("corr_qc_true_cost")))
     has_reach = int(bool(cell.get("reach")))
     is_active_pid_sanity = int(
@@ -109,7 +118,7 @@ def _cell_score(cell: dict[str, str]) -> tuple[int, int, int]:
         and cell.get("pid_source") == "active"
         and cell.get("depth") == "8"
     )
-    return (has_counterfactual, has_reach, is_active_pid_sanity)
+    return (preferred, has_counterfactual, has_reach, is_active_pid_sanity)
 
 
 def _normalize_int_text(value: str) -> str:
@@ -127,7 +136,9 @@ def build_cells(
 ) -> list[dict[str, str]]:
     cells_by_key: dict[tuple[str, str, str, str], dict[str, str]] = {}
 
-    def add(row: dict[str, str]) -> None:
+    def add(row: dict[str, str], *, source: str = "") -> None:
+        if source and "_source" not in row:
+            row = {**row, "_source": source}
         cell = _cell_from_summary_row(row)
         if cell is None:
             return
@@ -149,7 +160,7 @@ def build_cells(
 
     for path in logs:
         try:
-            add(parse_log(path))
+            add(parse_log(path), source=path.name)
         except Exception as exc:  # pragma: no cover - defensive for user logs
             _warn(f"could not parse log {path}: {exc}")
 
@@ -157,8 +168,10 @@ def build_cells(
         if "figures/data/paper" in path.as_posix():
             continue
         for row in read_csv(path):
-            add(row)
+            add(row, source=f"{path.name}:{row.get('file', '')}")
     rows = list(cells_by_key.values())
+    for row in rows:
+        row.pop("_source", None)
     rows.sort(key=lambda r: (r["mode"], int(float(r["depth"])), int(float(r["seed"])), r["pid_source"]))
     return rows
 
