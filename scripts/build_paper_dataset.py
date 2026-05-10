@@ -35,6 +35,8 @@ DEFAULT_CSV_GLOBS = (
     "runs/**/*.csv",
     "logs/**/*.csv",
 )
+CORE_DEPTHS = {"4", "8", "16", "32"}
+CORE_SEEDS = {"0", "1", "2"}
 
 
 def _warn(message: str) -> None:
@@ -99,13 +101,41 @@ def _cell_from_summary_row(row: dict[str, str]) -> dict[str, str] | None:
     return out
 
 
-def build_cells(logs: list[Path], csv_paths: list[Path]) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str, str]] = set()
+def _cell_score(cell: dict[str, str]) -> tuple[int, int, int]:
+    has_counterfactual = int(bool(cell.get("corr_qc_true_cost")))
+    has_reach = int(bool(cell.get("reach")))
+    is_active_pid_sanity = int(
+        cell.get("mode") == "dense"
+        and cell.get("pid_source") == "active"
+        and cell.get("depth") == "8"
+    )
+    return (has_counterfactual, has_reach, is_active_pid_sanity)
+
+
+def _normalize_int_text(value: str) -> str:
+    numeric = to_float(value)
+    if numeric is None:
+        return value
+    return str(int(numeric))
+
+
+def build_cells(
+    logs: list[Path],
+    csv_paths: list[Path],
+    *,
+    include_extra_cells: bool = False,
+) -> list[dict[str, str]]:
+    cells_by_key: dict[tuple[str, str, str, str], dict[str, str]] = {}
 
     def add(row: dict[str, str]) -> None:
         cell = _cell_from_summary_row(row)
         if cell is None:
+            return
+        cell["depth"] = _normalize_int_text(cell["depth"])
+        cell["seed"] = _normalize_int_text(cell["seed"])
+        if not include_extra_cells and (
+            cell["depth"] not in CORE_DEPTHS or cell["seed"] not in CORE_SEEDS
+        ):
             return
         key = (
             cell["mode"],
@@ -113,10 +143,9 @@ def build_cells(logs: list[Path], csv_paths: list[Path]) -> list[dict[str, str]]
             cell["depth"],
             cell["seed"],
         )
-        if key in seen:
-            return
-        seen.add(key)
-        rows.append(cell)
+        existing = cells_by_key.get(key)
+        if existing is None or _cell_score(cell) > _cell_score(existing):
+            cells_by_key[key] = cell
 
     for path in logs:
         try:
@@ -129,6 +158,7 @@ def build_cells(logs: list[Path], csv_paths: list[Path]) -> list[dict[str, str]]
             continue
         for row in read_csv(path):
             add(row)
+    rows = list(cells_by_key.values())
     rows.sort(key=lambda r: (r["mode"], int(float(r["depth"])), int(float(r["seed"])), r["pid_source"]))
     return rows
 
@@ -271,6 +301,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--csv", action="append", type=Path, default=[])
     parser.add_argument("--log-glob", action="append", default=[])
     parser.add_argument("--csv-glob", action="append", default=[])
+    parser.add_argument(
+        "--include-extra-cells",
+        action="store_true",
+        help="Keep depths/seeds outside the paper matrix instead of filtering them.",
+    )
     args = parser.parse_args(argv)
 
     logs = [path for path in args.log if path.is_file()]
@@ -282,7 +317,9 @@ def main(argv: list[str] | None = None) -> int:
     if not csv_paths:
         _warn("no source CSV files found")
 
-    cells = build_cells(logs, csv_paths)
+    cells = build_cells(
+        logs, csv_paths, include_extra_cells=args.include_extra_cells
+    )
     variance = build_variance(csv_paths)
     oracle = build_oracle_fits(csv_paths)
 
