@@ -417,6 +417,7 @@ def test_depth_dense_sweep_matches_cmdp_depth_grid_with_dense_pid_source() -> No
     source = Path("slurm/depth_dense_sweep.sh").read_text()
 
     assert "#SBATCH --array=0-11" in source
+    assert "#SBATCH --time=06:00:00" in source
     assert "safe_depth_dense.%A_%a.out" in source
     assert (
         'DEPTH_LABELS=("dense_depth4" "dense_depth8" '
@@ -432,6 +433,8 @@ def test_depth_dense_sweep_matches_cmdp_depth_grid_with_dense_pid_source() -> No
     assert "export PID_COST_SOURCE_OVERRIDE=sparse" in source
     assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
     assert "export EVAL_COUNTERFACTUAL_ACTION_PROBES_OVERRIDE=true" in source
+    assert "export COUNTERFACTUAL_PROBE_RANDOM_ACTIONS_OVERRIDE=8" in source
+    assert "export COUNTERFACTUAL_PROBE_PERTURB_ACTIONS_OVERRIDE=8" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source
     assert "true_action_sparse_cost_spread" in source
