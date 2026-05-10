@@ -361,7 +361,12 @@ def test_relative_xy_sweep_compares_absolute_and_relative_xy_goals() -> None:
         'PROBE_COUNTERFACTUAL_COSTS="${PROBE_COUNTERFACTUAL_COSTS_OVERRIDE:-false}"'
         in source
     )
+    assert (
+        'COUNTERFACTUAL_PROBE_INTERVAL="${COUNTERFACTUAL_PROBE_INTERVAL_OVERRIDE:-1}"'
+        in source
+    )
     assert "--probe-counterfactual-costs" in source
+    assert '--counterfactual-probe-interval "$COUNTERFACTUAL_PROBE_INTERVAL"' in source
     assert '--cost-return-loss-weight "$COST_RETURN_LOSS_WEIGHT"' in source
     assert '--cost-risk-replay-ratio "$COST_RISK_REPLAY_RATIO"' in source
     assert "cost_return_loss_weight" in source
@@ -435,6 +440,7 @@ def test_depth_dense_sweep_matches_cmdp_depth_grid_with_dense_pid_source() -> No
     assert "export EVAL_COUNTERFACTUAL_ACTION_PROBES_OVERRIDE=true" in source
     assert "export COUNTERFACTUAL_PROBE_RANDOM_ACTIONS_OVERRIDE=8" in source
     assert "export COUNTERFACTUAL_PROBE_PERTURB_ACTIONS_OVERRIDE=8" in source
+    assert "export COUNTERFACTUAL_PROBE_INTERVAL_OVERRIDE=200" in source
     assert "export SLURM_ARRAY_TASK_ID=3" in source
     assert "bash slurm/relative_xy_sweep.sh" in source
     assert "true_action_sparse_cost_spread" in source

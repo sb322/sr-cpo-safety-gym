@@ -408,6 +408,7 @@ def test_default_cost_limit_matches_calibrated_dual_scale() -> None:
     assert TrainConfig().counterfactual_probe_random_actions == 16
     assert TrainConfig().counterfactual_probe_perturb_actions == 16
     assert TrainConfig().counterfactual_probe_perturb_std == 0.1
+    assert TrainConfig().counterfactual_probe_interval == 1
     assert TrainConfig().enable_multistep_counterfactual_probes is False
     assert TrainConfig().counterfactual_probe_horizons == "5,10,20"
     assert TrainConfig().counterfactual_probe_max_states == 0

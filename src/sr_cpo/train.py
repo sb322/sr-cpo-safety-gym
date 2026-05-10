@@ -12,7 +12,7 @@ import os
 import time
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +97,7 @@ class TrainConfig:
     counterfactual_probe_random_actions: int = 16
     counterfactual_probe_perturb_actions: int = 16
     counterfactual_probe_perturb_std: float = 0.1
+    counterfactual_probe_interval: int = 1
     enable_multistep_counterfactual_probes: bool = False
     counterfactual_probe_horizons: str = "5,10,20"
     counterfactual_probe_max_states: int = 0
@@ -2677,6 +2678,8 @@ def initialize_training(
     if config.cost_risk_min_fraction_available < 0.0:
         raise ValueError("cost_risk_min_fraction_available must be non-negative")
     _parse_counterfactual_horizons(config.counterfactual_probe_horizons)
+    if config.counterfactual_probe_interval <= 0:
+        raise ValueError("counterfactual_probe_interval must be positive")
     if config.counterfactual_probe_max_states < 0:
         raise ValueError("counterfactual_probe_max_states must be non-negative")
     key = jax.random.PRNGKey(config.seed)
@@ -3388,6 +3391,23 @@ def run_training(
         (std_scale, make_policy_evaluator(objects, config, std_scale=std_scale))
         for std_scale in eval_std_scales
     )
+    no_probe_policy_evaluators = policy_evaluators
+    if (
+        config.eval_counterfactual_action_probes
+        and config.counterfactual_probe_interval > 1
+    ):
+        no_probe_config = replace(
+            config,
+            eval_counterfactual_action_probes=False,
+            enable_multistep_counterfactual_probes=False,
+        )
+        no_probe_policy_evaluators = tuple(
+            (
+                std_scale,
+                make_policy_evaluator(objects, no_probe_config, std_scale=std_scale),
+            )
+            for std_scale in eval_std_scales
+        )
     eval_key = jax.random.fold_in(jax.random.PRNGKey(config.seed), 0x5EED)
 
     last_metrics: Mapping[str, Array] | None = None
@@ -3400,10 +3420,17 @@ def run_training(
         )
         elapsed = time.perf_counter() - start
         merged_eval_metrics: dict[str, Array] = {}
-        for std_scale, policy_evaluator in policy_evaluators:
+        should_probe_eval = config.eval_counterfactual_action_probes and (
+            (epoch + 1) == config.epochs
+            or (epoch + 1) % config.counterfactual_probe_interval == 0
+        )
+        active_policy_evaluators = (
+            policy_evaluators if should_probe_eval else no_probe_policy_evaluators
+        )
+        for std_scale, policy_evaluator in active_policy_evaluators:
             eval_key, epoch_eval_key = jax.random.split(eval_key)
             eval_params: Any
-            if config.eval_counterfactual_action_probes:
+            if should_probe_eval:
                 eval_params = (state.actor_params, state.cost_critic_params)
             else:
                 eval_params = state.actor_params
