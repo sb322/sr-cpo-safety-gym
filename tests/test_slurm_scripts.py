@@ -447,6 +447,27 @@ def test_depth_dense_sweep_matches_cmdp_depth_grid_with_dense_pid_source() -> No
     assert "true_action_dense_cost_spread" in source
 
 
+def test_dense_depth8_active_pid_sanity_is_three_seed_depth8_dense() -> None:
+    source = Path("slurm/dense_depth8_active_pid_sanity.sh").read_text()
+
+    assert "#SBATCH --array=0-2" in source
+    assert "#SBATCH --time=06:00:00" in source
+    assert "safe_dense_d8_active.%A_%a.out" in source
+    assert 'SEED_VALUES=("0" "1" "2")' in source
+    assert "export EPOCHS_OVERRIDE=200" in source
+    assert "export STEPS_PER_EPOCH_OVERRIDE=7" in source
+    assert "export SGD_STEPS_OVERRIDE=4" in source
+    assert "export NUM_BLOCKS_OVERRIDE=8" in source
+    assert "export COST_MODE_OVERRIDE=dense_proximity" in source
+    assert "export COST_DENSE_PROX_TAU_OVERRIDE=0.5" in source
+    assert "export PID_COST_SOURCE_OVERRIDE=active" in source
+    assert "export PROBE_COUNTERFACTUAL_COSTS_OVERRIDE=true" in source
+    assert "export EVAL_COUNTERFACTUAL_ACTION_PROBES_OVERRIDE=true" in source
+    assert "export COUNTERFACTUAL_PROBE_INTERVAL_OVERRIDE=200" in source
+    assert "export SLURM_ARRAY_TASK_ID=3" in source
+    assert "bash slurm/relative_xy_sweep.sh" in source
+
+
 def test_relxy_depth_pid_off_200epoch_sweeps_representation_depth() -> None:
     source = Path("slurm/relxy_depth_pid_off_200epoch.sh").read_text()
 
