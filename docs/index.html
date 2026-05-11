@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SR-CPO Depth-Supervision Diagnostic</title>
+    <meta
+      name="description"
+      content="Project page for the SR-CPO depth and safety-supervision diagnostic on Safety-Gym GoToGoal."
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #1c1c1c;
+        --muted: #666;
+        --line: #d8d8d8;
+        --soft: #f6f6f3;
+        --accent: #b6501e;
+        --accent-dark: #76320f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      main {
+        width: min(980px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      header {
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, #fbfbf8 0%, #fff 100%);
+      }
+
+      .hero {
+        width: min(980px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 56px 0 34px;
+      }
+
+      h1 {
+        margin: 0 0 14px;
+        max-width: 900px;
+        font-size: clamp(2rem, 5vw, 4rem);
+        line-height: 1.02;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin: 48px 0 14px;
+        font-size: 1.5rem;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 8px;
+      }
+
+      h3 {
+        margin: 28px 0 8px;
+        font-size: 1.05rem;
+      }
+
+      p {
+        max-width: 860px;
+      }
+
+      .dek {
+        max-width: 860px;
+        font-size: 1.15rem;
+        color: #333;
+      }
+
+      .authors,
+      .links,
+      .note {
+        color: var(--muted);
+      }
+
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .links a,
+      .button {
+        display: inline-flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 6px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--accent-dark);
+        background: #fff;
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .links a:hover,
+      .button:hover {
+        border-color: var(--accent);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      .callout {
+        border-left: 4px solid var(--accent);
+        background: var(--soft);
+        padding: 14px 16px;
+      }
+
+      figure {
+        margin: 28px 0;
+        padding: 0;
+      }
+
+      figure img {
+        width: 100%;
+        display: block;
+        border: 1px solid var(--line);
+        background: white;
+      }
+
+      figcaption {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0 8px;
+        font-size: 0.94rem;
+      }
+
+      th,
+      td {
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        padding: 8px 6px;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--soft);
+      }
+
+      code,
+      pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      pre {
+        overflow-x: auto;
+        background: #202124;
+        color: #f7f7f7;
+        padding: 14px;
+        border-radius: 6px;
+      }
+
+      footer {
+        margin-top: 56px;
+        padding: 28px 0 46px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+      }
+
+      @media (max-width: 680px) {
+        .hero {
+          padding-top: 36px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <section class="hero">
+        <h1>Network Depth, Safety Supervision, and the Action-Flat Cost Critic</h1>
+        <p class="dek">
+          A diagnostic study of why depth scaling in contrastive reinforcement learning does not directly
+          transfer to action-sensitive safety constraints in SR-CPO on Safety-Gym GoToGoal.
+        </p>
+        <p class="authors">
+          Shahriar B. et al. Placeholder author list. Update this before submission.
+        </p>
+        <nav class="links" aria-label="Project links">
+          <a href="https://github.com/sb322/sr-cpo-safety-gym">Code</a>
+          <a href="figures/fig2_spurious_variation.pdf">Smoking-Gun Figure</a>
+          <a href="data/table2_aggregate.csv">Aggregate Table</a>
+          <a href="#citation">Citation</a>
+        </nav>
+      </section>
+    </header>
+
+    <main>
+      <section>
+        <h2>Summary</h2>
+        <p>
+          Depth helps goal-reaching in contrastive reinforcement learning, but this diagnostic asks whether
+          that depth-scaling effect transfers to the constrained safety critic. Across sparse and dense safety
+          supervision, depths 4 through 32, and sparse-vs-active PID variants, we find that the learned cost
+          critic develops substantial action-dependent variation that is not aligned with true same-state
+          counterfactual safety cost.
+        </p>
+        <div class="grid">
+          <div class="callout">
+            <strong>Depth does not fix safety.</strong>
+            Hard-violation and cost-return trends do not improve systematically with deeper cost critics.
+          </div>
+          <div class="callout">
+            <strong>Dense labels do not fix safety.</strong>
+            Dense proximity supervision still produces near-zero alignment with true counterfactual cost.
+          </div>
+          <div class="callout">
+            <strong>The actor exploits a spurious critic.</strong>
+            Actor actions score low under Q<sub>c</sub>, but remain random under true counterfactual cost.
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Headline Matrix</h2>
+        <figure>
+          <img src="figures/fig1_depth_supervision_matrix.png" alt="Hard violation and cost return versus network depth." />
+          <figcaption>
+            Fig. 1. Safety outcomes across depth and supervision. Dense supervision and depth scaling do not
+            produce a reliable safety improvement.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>Spurious Action Variation</h2>
+        <figure>
+          <img src="figures/fig2_spurious_variation.png" alt="Actor Qc percentile versus true cost percentile and Qc spread versus correlation." />
+          <figcaption>
+            Fig. 2. Q<sub>c</sub> assigns actor actions low predicted cost, but the same actions are near the
+            median under true counterfactual cost. Q<sub>c</sub> varies across actions, but that variation is
+            nearly uncorrelated with true safety.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>Mechanism</h2>
+        <figure>
+          <img src="figures/fig3_variance_decomposition.png" alt="Within-between variance ratio versus cost horizon." />
+          <figcaption>
+            Fig. 3. Cost-return labels are dominated by between-state risk variation; the within-state
+            action-conditional component is orders of magnitude smaller.
+          </figcaption>
+        </figure>
+        <figure>
+          <img src="figures/fig4_synthetic_control.png" alt="Synthetic action control and dense oracle Spearman comparison." />
+          <figcaption>
+            Fig. 4. The same architecture fits synthetic action-conditional labels, ruling out a simple
+            capacity bottleneck.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>Reach Context</h2>
+        <figure>
+          <img src="figures/fig5_reach_vs_depth.png" alt="Reach versus network depth." />
+          <figcaption>
+            Fig. 5. Goal-reaching provides context for the safety diagnostic; the cost-critic failure is not
+            simply explained by output flatness.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section>
+        <h2>Key Aggregate Numbers</h2>
+        <p>
+          The table below is copied from the paper build pipeline. Full CSV and TeX tables are available in
+          <a href="data/table2_aggregate.csv">data/table2_aggregate.csv</a>.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Regime</th>
+              <th>Depth</th>
+              <th>Hard</th>
+              <th>Reach</th>
+              <th>Actor Q<sub>c</sub> pct.</th>
+              <th>Actor true pct.</th>
+              <th>Corr.</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Dense, sparse PID</td>
+              <td>4-32</td>
+              <td>0.048-0.059</td>
+              <td>0.019-0.068</td>
+              <td>0.100-0.138</td>
+              <td>0.498-0.504</td>
+              <td>near 0</td>
+            </tr>
+            <tr>
+              <td>Dense, active PID sanity</td>
+              <td>8</td>
+              <td>0.058</td>
+              <td>0.025</td>
+              <td>0.150</td>
+              <td>0.503</td>
+              <td>-0.008</td>
+            </tr>
+            <tr>
+              <td>Sparse, active PID</td>
+              <td>4-16</td>
+              <td>0.039-0.061</td>
+              <td>0.874-0.994</td>
+              <td>available at depth 8</td>
+              <td>available at depth 8</td>
+              <td>0.000</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="citation">
+        <h2>Citation</h2>
+        <p class="note">Placeholder BibTeX. Replace with final venue metadata.</p>
+        <pre><code>@misc{sr_cpo_depth_diagnostic,
+  title  = {Network Depth, Safety Supervision, and the Action-Flat Cost Critic},
+  author = {Shahriar B. and collaborators},
+  year   = {2026},
+  url    = {https://sb322.github.io/sr-cpo-safety-gym/}
+}</code></pre>
+      </section>
+
+      <footer>
+        <p>
+          This page is served from the <code>docs/</code> folder of
+          <a href="https://github.com/sb322/sr-cpo-safety-gym">sb322/sr-cpo-safety-gym</a>.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

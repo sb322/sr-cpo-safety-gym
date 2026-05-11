@@ -1,0 +1,17 @@
+section,label,mean,se,n
+variance,dense H=0,21.630,2.823,52
+variance,dense H=1,5.72e-07,9.74e-08,19
+variance,dense H=5,2.53e-05,4.25e-06,16
+variance,dense H=10,2.43e-07,5.22e-08,3
+variance,dense H=20,0.001,1.51e-04,56
+variance,dense H=50,0.003,7.06e-04,74
+variance,sparse H=1,0.000,0.000,19
+variance,sparse H=5,7.93e-04,6.40e-04,16
+variance,sparse H=20,0.019,0.006,35
+variance,sparse H=50,0.187,0.075,23
+oracle,dense_h1,-0.175,0.151,7
+oracle,dense_h20,0.224,0.072,48
+oracle,dense_h5,-0.010,0.104,7
+oracle,dense_h50,0.320,0.054,29
+oracle,sparse_h50,-0.003,0.011,6
+oracle,synthetic_action_norm,0.934,0.039,47
